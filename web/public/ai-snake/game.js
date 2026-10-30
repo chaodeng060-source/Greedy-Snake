@@ -1,10 +1,10 @@
-import { newGame, createState, step, viewportFor, finishGame } from "./engine.js?v=20261031b";
-import { PAL, SKIN_LOOK, PUMPKIN, GHOST, drawSprite } from "./sprites.js?v=20261031b";
-import { drawSnake as paintSnake, headIcon, drawRewards, drawRemains, inViewport } from "./draw.js?v=20261031b";
-import { loadSkins, lookFromSkin, decodeSkin, addSkin } from "./skin.js?v=20261031b";
-import { initRooms } from "./rooms.js?v=20261031b";
+import { newGame, createState, step, viewportFor, finishGame } from "./engine.js?v=20261031c";
+import { PAL, SKIN_LOOK, PUMPKIN, GHOST, drawSprite } from "./sprites.js?v=20261031c";
+import { drawSnake as paintSnake, headIcon, drawRewards, drawRemains, inViewport } from "./draw.js?v=20261031c";
+import { loadSkins, lookFromSkin, decodeSkin, addSkin } from "./skin.js?v=20261031c";
+import { initRooms } from "./rooms.js?v=20261031c";
 
-const VERSION = "10/31 b";
+const VERSION = "10/31 c";
 
 const CELL = 10;
 const PAD = 6;
@@ -112,6 +112,20 @@ function drawSnake(s, t) {
     ctx.fillStyle = "rgba(155, 231, 255, 0.45)";
     for (const cell of s.body) if (inViewport(cell, camera)) { const [x, y] = cellXY(cell); ctx.fillRect(x, y, CELL, CELL); }
   }
+  // 金身：整条罩一层会流动的金光，外加一串往尾巴跑的亮点；最后 2 回合快闪，提醒快没了。
+  const guardLeft = (s.guardUntil || 0) - state.turn;
+  if (guardLeft > 0 && !(guardLeft <= 2 && Math.floor(t / 120) % 2)) {
+    const shift = Math.floor(t / 120);
+    s.body.forEach((cell, i) => {
+      if (!inViewport(cell, camera)) return;
+      const [x, y] = cellXY(cell);
+      ctx.fillStyle = `rgba(255, 214, 63, ${0.3 + 0.25 * (0.5 + 0.5 * Math.sin(t / 110 - i * 0.7))})`;
+      ctx.fillRect(x, y, CELL, CELL);
+      ctx.strokeStyle = "rgba(255, 243, 176, 0.9)"; ctx.lineWidth = 1;
+      ctx.strokeRect(x + 0.5, y + 0.5, CELL - 1, CELL - 1);
+      if ((i + shift) % 3 === 0) { ctx.fillStyle = "#fffbe0"; ctx.fillRect(x + 2, y + 2, 2, 2); ctx.fillRect(x + 6, y + 6, 1, 1); }
+    });
+  }
   if (state.snakes.length > 1 && s.body.length && inViewport(s.body[0], camera)) {
     const i = state.snakes.findIndex((snake) => snake.id === s.id);
     const [x, y] = cellXY(s.body[0]);
@@ -165,7 +179,7 @@ function updateHud() {
     chip.append(headIcon(lookOf(s)));
     const label = document.createElement("span");
     label.style.color = lookOf(s).label;
-    const status = !s.alive ? "" : `${(s.doubleUntil || 0) > state.turn ? ` ×2 剩${s.doubleUntil - state.turn}` : ""}${(s.frozenUntil || 0) > state.turn ? ` ❄${s.frozenUntil - state.turn}` : ""}`;
+    const status = !s.alive ? "" : `${(s.doubleUntil || 0) > state.turn ? ` ×2 剩${s.doubleUntil - state.turn}` : ""}${(s.frozenUntil || 0) > state.turn ? ` ❄${s.frozenUntil - state.turn}` : ""}${(s.guardUntil || 0) > state.turn ? ` 金身${s.guardUntil - state.turn}` : ""}`;
     label.textContent = `${state.snakes.length > 1 ? (state.snakes.indexOf(s) + 1) + " · " : ""}${s.name}${s.id === roomPlayerId ? "（你）" : ""} ${s.score}${status}`;
     chip.append(label);
     box.append(chip);

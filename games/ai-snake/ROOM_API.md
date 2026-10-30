@@ -82,4 +82,8 @@ Per-seat call cap (8–40, see above) persists across restarts; global automatic
 Rewards only in room games. New rooms set `config.powerups` (POST body `powerups:false` opts out): & crown +10,
 % cherries double the eater's points for 10 turns, ~ snowflake freezes every other living snake for 3 turns
 (frozen: no move, no eat, no death, whole body incl. head is a wall; their queued moves wait). Replays without the flag are unchanged.
+Rooms created from 2026-10-31 also set `config.guard` (POST `guard:false` opts out): ! golden shield makes the eater immune to other
+snakes for 8 turns — it passes through other bodies (frozen heads too) and survives head collisions while the other dies ("撞上金身");
+walls and self-bites still kill, and others hitting its body still die. Two shielded heads in one cell both survive and nobody eats there.
+Powerup rooms without `guard` keep their original reward draw.
 A runner tolerates up to 3 consecutive model failures (each posts an error and counts a call); longer plans are truncated to the requested steps. Tests may set testBot; labelled test seats are excluded from aggregate AND grouped boards.

@@ -62,12 +62,16 @@ export const REMAINS_VALUE = 2;
 // 大奖皇冠（10 分）。旧局的 config 没有这个字段，只刷金南瓜和糖果袋，回放不会变。
 export const DOUBLE_TURNS = 10;
 export const FREEZE_TURNS = 3;
+// guard：再多一样金身盾牌，吃到后 8 回合别的蛇杀不死它。只有带 guard 的新局才刷，
+// 昨天开了 powerups 的局没有这个字段，刷奖励的随机数用法不变，回放照旧。
+export const GUARD_TURNS = 8;
 export const REWARDS = {
   gold: { mark: "+", value: 3, name: "金南瓜" },
   bag: { mark: "$", value: 5, name: "糖果袋" },
   double: { mark: "%", value: 0, name: "双倍樱桃", note: `吃到后 ${DOUBLE_TURNS} 回合得分翻倍` },
   freeze: { mark: "~", value: 0, name: "冻结雪花", note: `吃到后其他蛇原地定住 ${FREEZE_TURNS} 回合` },
   big: { mark: "&", value: 10, name: "大奖皇冠" },
+  guard: { mark: "!", value: 0, name: "金身", note: `吃到后 ${GUARD_TURNS} 回合别的蛇杀不死你` },
 };
 const rewardMark = (kind) => REWARDS[kind]?.mark || "$";
 
@@ -76,7 +80,12 @@ export function isFrozen(snake, turn) {
   return (snake.frozenUntil || 0) >= turn;
 }
 
-export function newConfig({ width = 15, height = 15, seed, foodCount, maxTurns = 600, players, wrap = false, rewards = false, rewardEvery = 10, rewardLife = 18, victory, world, durationSeconds, brawl = true, powerups = false } = {}) {
+// 金身：撞上别的蛇（身子、冻住的头、撞头）都不死，撞墙和咬到自己照样出局。
+export function isGuarded(snake, turn) {
+  return (snake.guardUntil || 0) >= turn;
+}
+
+export function newConfig({ width = 15, height = 15, seed, foodCount, maxTurns = 600, players, wrap = false, rewards = false, rewardEvery = 10, rewardLife = 18, victory, world, durationSeconds, brawl = true, powerups = false, guard = false } = {}) {
   const ps = (players && players.length ? players : [{ id: "crab", skin: "crab" }]).map((p, i) => {
     const skin = SKINS[p.skin] ? p.skin : Object.keys(SKINS)[i % Object.keys(SKINS).length];
     return { id: String(p.id || skin), name: p.name || SKINS[skin].name, skin };
@@ -99,6 +108,7 @@ export function newConfig({ width = 15, height = 15, seed, foodCount, maxTurns =
     ...(victory === "score" ? {durationSeconds: durationSeconds ?? 60} : {}),
     ...(rewards ? { rewards: true, rewardEvery: Math.max(1, rewardEvery | 0), rewardLife: Math.max(1, rewardLife | 0) } : {}),
     ...(rewards && powerups ? { powerups: true } : {}),
+    ...(rewards && powerups && guard ? { guard: true } : {}),
     ...(brawl ? { brawl: true } : {}),
   };
 }
@@ -205,11 +215,12 @@ function refreshRewards(state, config) {
   const [type, next2] = nextRandom(state.rng); state.rng = next2;
   const [x, y] = free[Math.floor(r * free.length)];
   // 冻结最稀有、皇冠其次；没开 powerups 的旧局还是三成糖果袋、七成金南瓜。
+  // 金身从金南瓜那份里切 6%，其余几样的概率不动。
   const kind = config.powerups
-    ? (type < 0.25 ? "bag" : type < 0.37 ? "double" : type < 0.45 ? "freeze" : type < 0.52 ? "big" : "gold")
+    ? (type < 0.25 ? "bag" : type < 0.37 ? "double" : type < 0.45 ? "freeze" : type < 0.52 ? "big" : config.guard && type < 0.58 ? "guard" : "gold")
     : (type < 0.3 ? "bag" : "gold");
   const half = Math.max(2, Math.floor(config.rewardLife / 2));
-  const life = { gold: config.rewardLife, bag: half, double: Math.max(2, Math.floor(config.rewardLife * 2 / 3)), freeze: half, big: Math.max(2, Math.floor(config.rewardLife / 3)) }[kind];
+  const life = { gold: config.rewardLife, bag: half, double: Math.max(2, Math.floor(config.rewardLife * 2 / 3)), freeze: half, big: Math.max(2, Math.floor(config.rewardLife / 3)), guard: half }[kind];
   state.rewards.push({x, y, kind, value: REWARDS[kind].value, expiresAt: state.turn + life});
 }
 
@@ -291,7 +302,11 @@ export function step(state, config, moves = {}) {
     heads.set(s.id, [hx, hy]);
   }
 
+  // 这一拍有金身的蛇；没开 guard 的局里谁都没有。
+  const guarded = new Set(config.guard ? movers.filter((s) => isGuarded(s, state.turn)).map((s) => s.id) : []);
+
   // brawl：几个头同一拍挤进同一格，算撞头，这一格的糖谁也吃不到。
+  // 只有一条金身挤进去时它照常吃，别的撞头出局；两条以上金身挤一格，都不死，糖也谁都不吃。
   const clash = new Set();
   if (config.brawl) {
     const byCell = new Map();
@@ -299,7 +314,11 @@ export function step(state, config, moves = {}) {
       const k = heads.get(s.id).join(",");
       byCell.set(k, [...(byCell.get(k) || []), s.id]);
     }
-    for (const ids of byCell.values()) if (ids.length > 1) ids.forEach((id) => clash.add(id));
+    for (const ids of byCell.values()) {
+      if (ids.length < 2) continue;
+      const gold = ids.filter((id) => guarded.has(id));
+      ids.forEach((id) => { if (!(gold.length === 1 && gold[0] === id)) clash.add(id); });
+    }
   }
 
   const eaten = new Set();
@@ -332,6 +351,7 @@ export function step(state, config, moves = {}) {
       s.growth = (s.growth || 0) + Math.max(0, Math.min(reward.value, 5) - 1);
       if (reward.kind === "double") s.doubleUntil = state.turn + DOUBLE_TURNS;
       if (reward.kind === "freeze") freezers.push(s.id);
+      if (reward.kind === "guard") s.guardUntil = state.turn + GUARD_TURNS;
       state.events.push({type: "eat", id: s.id, at: h, reward: reward.kind, value: reward.value * mult});
     } else if (fi >= 0) {
       eaten.add(fi);
@@ -362,13 +382,18 @@ export function step(state, config, moves = {}) {
     const k = x + "," + y;
     if (bodyCount.get(k)) {
       const self = s.body.slice(1).some(([bx, by]) => bx === x && by === y);
-      dead.set(s.id, self ? "咬到自己" : "撞上别人的身子");
-      continue;
+      // 金身穿过别人的身子（连冻住的头）不死；咬到自己照样出局。
+      if (self || !guarded.has(s.id)) {
+        dead.set(s.id, self ? "咬到自己" : "撞上别人的身子");
+        continue;
+      }
     }
     for (const o of movers) {
       if (o.id === s.id) continue;
       const [ox, oy] = o.body[0];
       if (ox === x && oy === y) {
+        if (guarded.has(s.id)) continue;
+        if (guarded.has(o.id)) { dead.set(s.id, "撞上金身"); break; }
         if (config.brawl) { dead.set(s.id, "撞头，一起出局"); break; }
         if (s.body.length > o.body.length) continue;
         dead.set(s.id, s.body.length === o.body.length ? "撞头，一样长，一起出局" : "撞头，比对方短");
@@ -494,12 +519,14 @@ export function renderText(state, config, asId) {
     let st = s.alive ? `头在 (${head[0]},${head[1]})，朝 ${s.dir}` : `第 ${s.deathTurn} 回合出局：${s.deathReason}`;
     if (s.alive && (s.frozenUntil || 0) > state.turn) st += `，被冻住还剩 ${s.frozenUntil - state.turn} 回合`;
     if (s.alive && (s.doubleUntil || 0) > state.turn) st += `，双倍得分还剩 ${s.doubleUntil - state.turn} 回合`;
+    if (s.alive && (s.guardUntil || 0) > state.turn) st += `，金身还剩 ${s.guardUntil - state.turn} 回合`;
     lines.push(`${tag} ${letters[s.id]}=${s.name}：长 ${s.body.length}，吃了 ${s.score} 颗，${st}`);
   }
   lines.push(`南瓜糖 *：${state.food.filter(([x,y]) => visible(x,y)).map(([x, y]) => `(${x},${y})`).join(" ") || "没有了"}`);
   if (config.powerups) {
     lines.push(`道具：%双倍樱桃=吃到后 ${DOUBLE_TURNS} 回合得分翻倍；~冻结雪花=吃到后其他蛇原地定住 ${FREEZE_TURNS} 回合，定住的蛇不动、不吃、不会死，整条身子连头都是墙，撞上去的出局；被冻住时你排好的路线等解冻再接着走。`);
-    lines.push("奖励 +金南瓜=3分、$糖果袋=5分、&大奖皇冠=10分、%双倍樱桃、~冻结雪花：" + ((state.rewards || []).filter(r => visible(r.x,r.y)).map(r => `${rewardMark(r.kind)}(${r.x},${r.y})剩${r.expiresAt - state.turn}步`).join(" ") || "暂未出现"));
+    if (config.guard) lines.push(`!金身=吃到后 ${GUARD_TURNS} 回合别的蛇杀不死你：撞上别人的身子（包括冻住的蛇）直接穿过去，跟别人撞头你没事、对方出局；撞墙、咬到自己照样出局。别的蛇撞上有金身的蛇的身子照样出局，别去撞有金身的头。`);
+    lines.push(`奖励 +金南瓜=3分、$糖果袋=5分、&大奖皇冠=10分、%双倍樱桃、~冻结雪花${config.guard ? "、!金身" : ""}：` +((state.rewards || []).filter(r => visible(r.x,r.y)).map(r => `${rewardMark(r.kind)}(${r.x},${r.y})剩${r.expiresAt - state.turn}步`).join(" ") || "暂未出现"));
   } else if (config.rewards) lines.push("奖励 +金南瓜=3分、$糖果袋=5分：" + ((state.rewards || []).filter(r => visible(r.x,r.y)).map(r => `${r.kind === "gold" ? "+" : "$"}(${r.x},${r.y})剩${r.expiresAt - state.turn}步`).join(" ") || "暂未出现"));
   if (state.remains && state.remains.length) {
     const shown = state.remains.filter(([x, y]) => visible(x, y));

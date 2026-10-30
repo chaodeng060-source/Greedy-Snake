@@ -1,5 +1,5 @@
 // 每个字符是一格像素，「.」是透明。
-import { PRIVATE_PALETTE, PRIVATE_LOOKS, PRIVATE_LABELS } from "./private-sprites.js?v=20261031b";
+import { PRIVATE_PALETTE, PRIVATE_LOOKS, PRIVATE_LABELS } from "./private-sprites.js?v=20261031c";
 export const ROOM_LABELS = { manual: "手动 AI", ...PRIVATE_LABELS };
 
 export const PAL = {
@@ -75,6 +75,8 @@ export const BAG = ["...qSq...", "....q....", "..qqSqq..", ".qSSSSSq.", "qSSSGSS
 export const CHERRY = ["....g....", "...g.g...", "..g...g..", ".rr...rr.", "rWrr.rWrr", "rrrr.rrrr", ".rr...rr."];
 export const SNOW = ["....L....", ".L..W..L.", "..LLWLL..", "LWWWLWWWL", "..LLWLL..", ".L..W..L.", "....L...."];
 export const CROWN = ["S...S...S", "SS.SSS.SS", "SSSSSSSSS", "SrSSLSSrS", "SSSSSSSSS", ".qqqqqqq."];
+// 金身：金色小盾牌，中间一道白十字。
+export const SHIELD = ["qqqqqqqqq", "qGGGWGGSq", "qGGGWGSSq", "qWWWWWWWq", "qGGGWGSSq", ".qGGWSSq.", "..qGWSq..", "...qqq..."];
 
 export function drawSprite(ctx, rows, x, y, override, alpha = 1, pal = PAL) {
   if (alpha !== 1) ctx.globalAlpha = alpha;

@@ -1,5 +1,5 @@
 // 画一条蛇：游戏和捏皮肤的预览共用这一份，捏出来什么样，进游戏就是什么样。
-import { PAL, HAT, GOLD, BAG, CANDY, CHERRY, SNOW, CROWN, drawSprite } from "./sprites.js?v=20261031b";
+import { PAL, HAT, GOLD, BAG, CANDY, CHERRY, SNOW, CROWN, SHIELD, drawSprite } from "./sprites.js?v=20261031c";
 
 export const CELL = 10;
 
@@ -71,7 +71,7 @@ export function drawRewards(ctx, rewards, xy, { t = 0, turn = 0, viewport = null
     const [x, y] = xy([reward.x, reward.y]);
     const urgent = reward.expiresAt != null && reward.expiresAt - turn < 8;
     const alpha = urgent && Math.floor(t / 140) % 2 ? 0.4 : 1;
-    drawSprite(ctx, ({ bag: BAG, double: CHERRY, freeze: SNOW, big: CROWN })[reward.kind] || GOLD, x, y + 1, null, alpha);
+    drawSprite(ctx, ({ bag: BAG, double: CHERRY, freeze: SNOW, big: CROWN, guard: SHIELD })[reward.kind] || GOLD, x, y + 1, null, alpha);
   }
 }
 

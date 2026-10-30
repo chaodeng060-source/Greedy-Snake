@@ -127,7 +127,8 @@ export class RoomService {
     const size = mapSize(players.length);
     const game = newGame({players, width: size, height: size, seed: body.seed,
       victory, world, durationSeconds, maxTurns, wrap: world === 'roam' ? false : body.wrap !== false,
-      foodCount: Math.max(2, players.length), rewards: true, powerups: body.powerups !== false});
+      foodCount: Math.max(2, players.length), rewards: true, powerups: body.powerups !== false,
+      guard: body.powerups !== false && body.guard !== false});
     const now = this.clock();
     const r = {id, hostHash: digest(hostToken), mode, players, game, state: createState(game.config),
       status: 'lobby', createdAt: new Date(now).toISOString(), tickMs, startedAt: null, deadlineAt: null,

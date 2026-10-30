@@ -6,7 +6,7 @@ import {setTimeout as delay} from 'node:timers/promises';
 import {resolveProvider} from './providers.mjs';
 import {ensureOllamaTunnel} from './ollama-tunnel.mjs';
 import {baseURL, requestJSON, SafeError} from './http.mjs';
-import {nearestTargets, describeTarget, REMAINS_VALUE, REWARDS, DOUBLE_TURNS, FREEZE_TURNS} from '../../../web/public/ai-snake/engine.js';
+import {nearestTargets, describeTarget, REMAINS_VALUE, REWARDS, DOUBLE_TURNS, FREEZE_TURNS, GUARD_TURNS} from '../../../web/public/ai-snake/engine.js';
 export {resolveProvider};
 export {ensureOllamaTunnel};
 
@@ -57,6 +57,10 @@ export function buildPrompt(look, player, steps = 32) {
       `Power-ups: & crown = ${REWARDS.big.value} points. % cherries = your points are doubled for the next ${DOUBLE_TURNS} turns. ~ snowflake = every OTHER snake freezes in place for ${FREEZE_TURNS} turns.`,
       'Frozen snakes do not move, eat or die; their whole body INCLUDING the head is a wall, and hitting it kills you. If YOU are frozen, your queued moves wait and resume after the freeze.',
     ] : []),
+    ...(look.room.config.guard ? [
+      `! golden shield = for the next ${GUARD_TURNS} turns other snakes cannot kill you: you pass straight through other bodies (frozen ones too), and in a head collision you survive while the other snake dies. Walls and biting yourself still kill you.`,
+      'A snake with a golden shield is still a wall to everyone else: hitting its body kills you, and never move your head into its head.',
+    ] : []),
     look.room.config.world === 'roam' ?
       'Roam is an unbounded plane: never wrap, even if config.wrap is true. The board is a local viewport with a GLOBAL origin; every coordinate is GLOBAL. Leaving the viewport is not hitting a wall. Offscreen bodies can still collide.' :
       'Arena borders follow config.wrap: wrap if true, otherwise outer walls kill. Coordinates are global; viewport origin is (0,0).',
@@ -70,7 +74,8 @@ export function buildPrompt(look, player, steps = 32) {
         victory: look.room.config.victory, world: look.room.config.world, durationSeconds: look.room.config.durationSeconds},
       viewport: look.viewport, remainingMs: look.room.remainingMs,
       ownCurrent: snake && {id: snake.id, head: snake.body[0], dir: snake.dir, length: snake.body.length, score: snake.score,
-        frozenTurnsLeft: Math.max(0, (snake.frozenUntil || 0) - look.turn), doubleTurnsLeft: Math.max(0, (snake.doubleUntil || 0) - look.turn)},
+        frozenTurnsLeft: Math.max(0, (snake.frozenUntil || 0) - look.turn), doubleTurnsLeft: Math.max(0, (snake.doubleUntil || 0) - look.turn),
+        ...(look.room.config.guard ? {guardTurnsLeft: Math.max(0, (snake.guardUntil || 0) - look.turn)} : {})},
       queuedMoves: look.queuedMoves, remaining: look.remaining, projectedOwnStart: queuedStart(look, player)}),
     'CURRENT BOARD:', typeof look.board === 'string' ? look.board : JSON.stringify(look.board),
     ...projectedHint(look, player),
