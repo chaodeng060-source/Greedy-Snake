@@ -1,0 +1,8 @@
+{
+  "name": "ai-snake",
+  "version": "0.1.0",
+  "description": "一个 AI 也能玩的回合制贪吃蛇",
+  "type": "module",
+  "license": "MIT",
+  "scripts": { "test": "node --test" }
+}

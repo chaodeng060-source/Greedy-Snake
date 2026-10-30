@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=5">
+<meta name="theme-color" content="#090d22">
+<title>AI 贪吃蛇 · 万圣夜</title>
+<style>
+  :root { --bg: #090d22; --ink: #eef0ff; --dim: #8e95bd; --warm: #ff8c1a; --gold: #ffd23f; --panel: #11173b; }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; height: 100%; background: radial-gradient(120% 80% at 50% 0%, #1f2150 0%, #0c1230 45%, var(--bg) 100%); color: var(--ink);
+    font: 15px/1.5 -apple-system, "PingFang SC", "Noto Sans CJK SC", "Microsoft YaHei", sans-serif; overscroll-behavior: none; }
+  body { display: flex; flex-direction: column; align-items: center; padding: max(10px, env(safe-area-inset-top)) 8px max(10px, env(safe-area-inset-bottom)); touch-action: pan-y; }
+  #hud { width: 100%; max-width: 560px; display: flex; gap: 6px; flex-wrap: wrap; align-items: center; justify-content: space-between; min-height: 30px; }
+  .chip { display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border-radius: 999px; background: rgba(17, 23, 59, .85); border: 1px solid #2c2556; font-size: 13px; }
+  .chip canvas { width: 20px; height: 20px; image-rendering: pixelated; }
+  .chip.out { opacity: .45; text-decoration: line-through; }
+  #turn { color: var(--dim); font-size: 12px; }
+  #stage { position: relative; margin-top: 6px; touch-action: none; }
+  #board { display: block; image-rendering: pixelated; image-rendering: crisp-edges; border-radius: 6px; box-shadow: 0 0 0 1px #2c2556, 0 12px 40px rgba(0,0,0,.5); }
+  #caption { width: 100%; max-width: 560px; min-height: 48px; margin-top: 8px; padding: 6px 12px; border-radius: 10px; background: rgba(17,23,59,.6); font-size: 14px; transition: opacity .4s; }
+  #caption:empty { opacity: 0; }
+  #caption b { font-weight: 600; }
+  #pad { margin-top: 10px; display: grid; grid-template-columns: repeat(3, 62px); grid-template-rows: repeat(2, 52px); gap: 6px; }
+  #pad { flex-shrink: 0; touch-action: none; }
+  #pad button { border: 0; border-radius: 12px; background: #1b2150; color: var(--ink); font-size: 22px; box-shadow: inset 0 -3px 0 #0c1230; }
+  #pad button:active { background: #2c4499; transform: translateY(1px); }
+  #pad .u { grid-column: 2; } #pad .l { grid-column: 1; grid-row: 2; } #pad .d { grid-column: 2; grid-row: 2; } #pad .r { grid-column: 3; grid-row: 2; }
+  #watchbar { margin-top: 10px; display: flex; gap: 8px; }
+  .btn { border: 0; border-radius: 10px; padding: 9px 16px; background: #1b2150; color: var(--ink); font-size: 15px; box-shadow: inset 0 -3px 0 #0c1230; }
+  .btn.warm { background: var(--warm); color: #1b1418; box-shadow: inset 0 -3px 0 #c4560a; font-weight: 600; }
+  .btn:active { transform: translateY(1px); }
+  .overlay { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; padding: 16px; text-align: center;
+    background: rgba(9, 13, 34, .78); border-radius: 6px; backdrop-filter: blur(2px); }
+  .overlay h1 { margin: 0; font-size: 24px; letter-spacing: 2px; }
+  .overlay h1 span { color: var(--warm); }
+  .overlay p { margin: 0; color: var(--dim); font-size: 13px; }
+  .overlay .row { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; }
+  .list { width: 100%; max-height: 52%; overflow: auto; display: flex; flex-direction: column; gap: 6px; }
+  .list button { text-align: left; }
+  .hidden { display: none !important; }
+  a.btn { text-decoration: none; display: inline-block; }
+  .skin-btn { display: inline-flex; align-items: center; gap: 6px; }
+  .skin-btn canvas { width: 20px; height: 20px; image-rendering: pixelated; }
+  #toast { position: fixed; left: 50%; top: max(12px, env(safe-area-inset-top)); transform: translateX(-50%); z-index: 9; max-width: 92vw;
+    padding: 8px 14px; border-radius: 10px; background: #1b2150; color: var(--ink); font-size: 14px; box-shadow: 0 6px 24px rgba(0,0,0,.5); }
+  #thinking { position: absolute; left: 50%; bottom: 10px; transform: translateX(-50%); padding: 3px 10px; border-radius: 999px; background: rgba(9,13,34,.8); color: var(--gold); font-size: 12px; }
+
+  #players { display: flex; gap: 4px; flex-wrap: wrap; }
+  .btn:disabled { opacity: .45; cursor: default; }
+  button, input, select, textarea { font: inherit; }
+  input, select, textarea { max-width: 100%; min-width: 0; color: var(--ink); background: #0c1230; border: 1px solid #383560; border-radius: 8px; padding: 9px; }
+  label { display: flex; flex-direction: column; gap: 4px; color: var(--dim); font-size: 13px; }
+  textarea { width: 100%; resize: vertical; }
+  #rooms { position: fixed; inset: 0; z-index: 5; overflow-y: auto; touch-action: pan-y; background: var(--bg); padding: max(12px, env(safe-area-inset-top)) 12px max(24px, env(safe-area-inset-bottom)); }
+  .room-shell { max-width: 560px; margin: auto; display: grid; gap: 14px; }
+  .room-shell h1, .room-shell h2 { margin: 0; }
+  .room-shell h2 { font-size: 18px; }
+  /* 卡片只有一列且允许收窄，输入框跟着卡片宽，不再把边框撑出去 */
+  .room-card { background: var(--panel); border: 1px solid #2c2556; padding: 12px; border-radius: 12px; display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px; min-width: 0; }
+  .room-card label > input, .room-card label > select { width: 100%; }
+  .room-row { display: flex; gap: 8px; align-items: center; justify-content: space-between; flex-wrap: wrap; }
+  .room-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+  /* 只有一位真人时占满一行，两位时并排 */
+  [data-human-fields].room-grid { grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); }
+  .room-muted { color: var(--dim); font-size: 13px; margin: 0; }
+  .room-status { color: var(--gold); font-size: 13px; }
+  #camera-tools { width: 100%; max-width: 560px; margin-top: 6px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  #camera-tools label { flex-direction: row; align-items: center; }
+  #camera-origin { font-variant-numeric: tabular-nums; }
+  .room-countdown { color: var(--gold); font-variant-numeric: tabular-nums; font-weight: 600; }
+  #room-bar, #room-details { width: 100%; max-width: 560px; margin-top: 8px; }
+  #room-details { display: grid; gap: 8px; padding-bottom: env(safe-area-inset-bottom); }
+  #room-details .room-card { padding: 10px; }
+  .room-table { width: 100%; border-collapse: collapse; font-size: 12px; text-align: left; }
+  .room-table th, .room-table td { padding: 6px 3px; border-bottom: 1px solid #2c2556; overflow-wrap: anywhere; }
+  .room-table-wrap { overflow-x: auto; }
+  .room-ident { display: inline-flex; align-items: center; gap: 5px; }
+  .room-ident canvas { width: 20px; height: 20px; image-rendering: pixelated; }
+  .room-error { color: #ffb1ac; }
+  #room-controls { position: sticky; bottom: 0; background: var(--bg); padding: 6px 0; }
+  #stage { max-width: 100%; }
+  .overlay { overflow-y: auto; touch-action: pan-y; }
+  @media (max-height: 650px) { .overlay { justify-content: flex-start; gap: 6px; } .overlay h1 { font-size: 20px; } }
+</style>
+</head>
+<body>
+  <div id="hud"><span id="players"></span><span id="turn"></span></div>
+  <section id="camera-tools" class="hidden" aria-label="漫游镜头"><label>跟随<select id="camera-follow" name="follow-player" aria-label="跟随哪条蛇"></select></label><span id="camera-origin" class="room-muted"></span></section>
+  <div id="stage">
+    <canvas id="board"></canvas>
+    <div id="thinking" class="hidden">AI 在想下一步……</div>
+    <div id="menu" class="overlay">
+      <h1>AI 贪吃蛇 <span>万圣夜</span></h1>
+      <p>吃南瓜糖，别撞墙，别咬到自己</p>
+      <div class="row">
+        <button class="btn warm" data-play="crab">我来玩 · 小螃蟹</button>
+        <span id="private-play" class="row"></span>
+      </div>
+      <div class="row hidden" id="custom-row"></div>
+      <div class="row">
+        <button class="btn" id="wrap-toggle">穿墙：开</button>
+        <button class="btn" id="open-rooms">开房间</button>
+        <button class="btn" id="open-live">看 AI 玩</button>
+        <button class="btn" id="open-ranking">排行榜</button>
+        <button class="btn" id="open-list">旧对局回放</button>
+        <a class="btn" href="./maker.html">✎ 捏皮肤</a>
+      </div>
+      <p id="best"></p>
+    </div>
+    <div id="games" class="overlay hidden">
+      <h1>对局记录</h1>
+      <div class="list" id="game-list"><p>正在翻……</p></div>
+      <button class="btn" data-menu>回菜单</button>
+    </div>
+    <div id="result" class="overlay hidden">
+      <h1 id="result-title"></h1>
+      <p id="result-detail"></p>
+      <div class="row">
+        <button class="btn warm" id="again">再来一局</button>
+        <button class="btn" data-menu>回菜单</button>
+      </div>
+    </div>
+  </div>
+  <div id="room-bar" class="hidden"></div>
+  <div id="caption" aria-live="polite"></div>
+  <section id="rooms" class="hidden" aria-label="联机大厅"></section>
+  <div id="pad" class="hidden">
+    <button class="u" data-dir="U">▲</button>
+    <button class="l" data-dir="L">◀</button>
+    <button class="d" data-dir="D">▼</button>
+    <button class="r" data-dir="R">▶</button>
+  </div>
+  <div id="watchbar" class="hidden">
+    <button class="btn" id="w-pause">暂停</button>
+    <button class="btn" id="w-speed">1 倍速</button>
+    <button class="btn" id="w-restart">从头看</button>
+    <button class="btn" data-menu>菜单</button>
+  </div>
+  <section id="room-details" class="hidden" aria-label="房间详情"></section>
+  <div id="toast" class="hidden" role="status"></div>
+  <!-- 页面本身每次都拿新的，脚本会被浏览器缓存：改了脚本就把 v 换一个 -->
+  <script type="module" src="./game.js?v=20261031b"></script>
+</body>
+</html>

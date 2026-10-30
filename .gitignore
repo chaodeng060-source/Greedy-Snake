@@ -1,0 +1,4 @@
+data/
+node_modules/
+.ai-snake-*.json
+games/current.json
