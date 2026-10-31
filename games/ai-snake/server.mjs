@@ -41,9 +41,16 @@ function rules(r) {
 }
 export class RoomService {
   constructor({dataDir = path.resolve(HERE, '../../data/ai-snake'), clock = Date.now,
-    aiTimeoutMs = 60000, autoBots = true} = {}) {
+    aiTimeoutMs = 60000, autoBots = true, notifyUrl, notifyToken, lobbyTtlMs, maxRooms} = {}) {
+    const env = process.env;
     this.dataDir = dataDir; this.clock = clock; this.aiTimeoutMs = aiTimeoutMs;
-    this.autoBots = autoBots; this.rooms = new Map(); this.children = new Set();
+    this.autoBots = autoBots; this.rooms = new Map(); this.children = new Set(); this.told = new Map();
+    // 回调地址只认服务器主人配的环境变量，建房的人改不了。
+    this.notifyUrl = notifyUrl ?? (env.AI_SNAKE_NOTIFY_URL?.trim() || null);
+    if (this.notifyUrl && !/^https?:\/\/[^\s]+$/.test(this.notifyUrl)) throw new Error('AI_SNAKE_NOTIFY_URL 须为 http(s) 地址');
+    this.notifyToken = notifyToken ?? (env.AI_SNAKE_NOTIFY_TOKEN || null);
+    this.lobbyTtlMs = lobbyTtlMs ?? Math.max(1, Number(env.AI_SNAKE_LOBBY_TTL_MINUTES) || 30) * 60000;
+    this.maxRooms = maxRooms ?? Math.min(64, Math.max(1, Number.parseInt(env.AI_SNAKE_MAX_ROOMS, 10) || 8));
     this.board = loadJSON(path.join(dataDir, 'leaderboard.json'), {players: {}, matches: {}, boards: {}});
     // Before explicit modes, every historical record belonged to survival/arena.
     if (!this.board.boards) this.board.boards = {'survival:arena': {victory: 'survival', world: 'arena',
@@ -92,18 +99,41 @@ export class RoomService {
   }
   authorize(hash, token) { if (!token || digest(token) !== hash) fail('座位或房主凭证不对', 403); }
   save(r) { atomicJSON(path.join(this.dataDir, 'rooms', `${r.id}.json`), r); }
+  waitMs(r) { return r.aiTimeoutMs ?? this.aiTimeoutMs; }
+  frozenNext(r, id) { return isFrozen(r.state.snakes.find(s => s.id === id), r.state.turn + 1); }
+  // 正在等谁交路线：活着、下一拍没被冻住、没挂机、排好的步子走空了的 AI。外部平台按这个去叫醒对应的住户。
+  waitingFor(r) {
+    if (!['warming', 'running'].includes(r.status) || r.state.over) return [];
+    return r.players.filter(p => p.kind === 'ai' && r.state.snakes.find(s => s.id === p.id)?.alive &&
+      !r.queues[p.id].length && !r.autoStraight?.[p.id] && !this.frozenNext(r, p.id)).map(p => p.id);
+  }
   snapshot(r) {
     const modeRules = rules(r);
     const remainingMs = modeRules.victory !== 'score' ? null : r.status === 'finished' ? 0 :
       r.deadlineAt == null ? modeRules.durationSeconds * 1000 : Math.max(0, r.deadlineAt - this.clock());
+    const waitingFor = this.waitingFor(r);
     return copy({id: r.id, status: r.status, mode: r.mode, config: r.game.config, state: r.state,
       ...modeRules, startedAt: r.startedAt ?? null, deadlineAt: r.deadlineAt ?? null, remainingMs,
       players: r.players.map(({tokenHash, ...p}) => p), tickMs: r.tickMs,
       plans: Object.fromEntries(r.players.map(p => [p.id, {remaining: r.queues[p.id].length}])),
+      openSeats: r.status === 'lobby' ? r.players.filter(p => !p.joined && (p.kind === 'human' || p.provider === 'manual'))
+        .map(p => ({id: p.id, kind: p.kind})) : [],
+      waitingFor, waitDeadlineAt: r.mode === 'ai' && waitingFor.length ? r.waitSince + this.waitMs(r) : null,
+      planWaitSeconds: this.waitMs(r) / 1000, missesBeforeAfk: r.missesBeforeAfk ?? 1,
       usage: r.usage, settlement: r.settlement, createdAt: r.createdAt});
   }
+  // 发给服务器主人配的回调地址；发不出去就算了，不重试，不影响对局。
+  notify(r, event, extra = {}) {
+    if (!this.notifyUrl) return;
+    try {
+      fetch(this.notifyUrl, {method: 'POST', redirect: 'error', signal: AbortSignal.timeout(5000),
+        headers: {'Content-Type': 'application/json', ...(this.notifyToken ? {Authorization: `Bearer ${this.notifyToken}`} : {})},
+        body: JSON.stringify({event, roomId: r.id, status: r.status, turn: r.state.turn, at: this.clock(), ...extra})})
+        .then(res => res.body?.cancel(), () => {});
+    } catch { /* 回调失败不影响对局 */ }
+  }
   create(body) {
-    if ([...this.rooms.values()].filter(r => r.status !== 'finished').length >= 8) fail('同时最多 8 个房间', 409);
+    if ([...this.rooms.values()].filter(r => r.status !== 'finished').length >= this.maxRooms) fail(`同时最多 ${this.maxRooms} 个房间`, 409);
     const humans = body.humans || [], ais = body.ais || [];
     if (!Array.isArray(humans) || !Array.isArray(ais) || humans.length > 2 || ais.length < 1 || ais.length > 4) fail('需要 1–4 个 AI，最多 2 个人');
     const mode = body.mode || (humans.length ? 'mixed' : 'ai');
@@ -118,6 +148,9 @@ export class RoomService {
     // AI-only runs at most once per 40ms; its turn safety cap must outlast the clock.
     const requestedTurns = integer(body.maxTurns, 600, 1, victory === 'score' ? 90001 : 1200);
     const maxTurns = victory === 'score' ? Math.max(requestedTurns, durationSeconds * 25 + 1) : requestedTurns;
+    // 外部住户想一步要几十秒：纯 AI 房间每轮最多等多久、连着超时几次才算挂机，建房时定。
+    const planWaitMs = body.planWaitSeconds === undefined ? undefined : integer(body.planWaitSeconds, 60, 5, 600) * 1000;
+    const missesBeforeAfk = integer(body.missesBeforeAfk, 1, 1, 5);
     const players = [...humans.map(p => ({...p, kind: 'human'})), ...ais.map(p => ({...p, kind: 'ai'}))].map((p, i) => {
       const provider = p.kind === 'human' ? null : (p.provider || 'manual');
       if (provider && provider !== 'manual' && !autoProviders().includes(provider)) fail('未知模型通道');
@@ -144,7 +177,8 @@ export class RoomService {
       guard: body.powerups !== false && body.guard !== false});
     const now = this.clock();
     const r = {id, hostHash: digest(hostToken), mode, players, game, state: createState(game.config),
-      status: 'lobby', createdAt: new Date(now).toISOString(), tickMs, startedAt: null, deadlineAt: null,
+      status: 'lobby', createdAt: new Date(now).toISOString(), activeAt: now, tickMs, startedAt: null, deadlineAt: null,
+      ...(planWaitMs ? {aiTimeoutMs: planWaitMs} : {}), missesBeforeAfk,
       waitSince: now, nextTick: now, queues: {}, requests: {}, usage: {}, eaten: {}, autoStraight: {}, telemetry: [], settlement: null};
     for (const p of players) {
       r.queues[p.id] = []; r.requests[p.id] = [];
@@ -162,18 +196,60 @@ export class RoomService {
     if (body.name) { p.name = String(body.name).slice(0, 40); p.identity = p.kind === 'human' ? `human:${p.name}` : `ai:manual:${p.model}:${p.name}`; }
     const cp = r.game.config.players.find(x => x.id === p.id); cp.name = p.name;
     r.state.snakes.find(x => x.id === p.id).name = p.name;
-    this.save(r); return {room: this.snapshot(r), playerId: p.id, token};
+    r.activeAt = this.clock();
+    this.save(r); this.notify(r, 'joined', {playerId: p.id, name: p.name});
+    return {room: this.snapshot(r), playerId: p.id, token};
+  }
+  // 开局前退座，座位空出来给别人；开局后不交路线就按超时处理。
+  leave(r, body) {
+    const p = r.players.find(p => p.id === body.playerId);
+    if (!p) fail('座位不存在', 404);
+    this.authorize(p.tokenHash, body.token);
+    if (r.status !== 'lobby') fail('对局已开始，不能退座', 409);
+    p.joined = false; p.tokenHash = digest(secret()); r.activeAt = this.clock();
+    this.save(r); this.notify(r, 'left', {playerId: p.id});
+    return {room: this.snapshot(r)};
+  }
+  cancel(r, body) {
+    this.authorize(r.hostHash, body.hostToken);
+    if (r.status !== 'lobby') fail('只能解散还没开局的房间', 409);
+    this.drop(r, 'host');
+    return {ok: true, roomId: r.id, status: r.status};
+  }
+  // 没开局的房间直接删掉，不进排行榜、不留回放。
+  drop(r, reason) {
+    r.status = 'cancelled'; this.rooms.delete(r.id); this.told.delete(r.id);
+    fs.rmSync(path.join(this.dataDir, 'rooms', `${r.id}.json`), {force: true});
+    this.notify(r, 'cancelled', {reason});
+  }
+  // 人没到齐就开局：撤掉空座，按剩下的人数重新摆地图，种子不变。
+  reseat(r, kept) {
+    if (!kept.length) fail('还没有人入座', 409);
+    const c = r.game.config, size = mapSize(kept.length);
+    r.players = kept;
+    r.game = newGame({players: kept, width: size, height: size, seed: c.seed, victory: c.victory, world: c.world,
+      durationSeconds: c.durationSeconds, maxTurns: c.maxTurns, wrap: c.wrap, foodCount: Math.max(2, kept.length),
+      rewards: Boolean(c.rewards), powerups: Boolean(c.powerups), guard: Boolean(c.guard)});
+    r.state = createState(r.game.config);
+    for (const key of ['queues', 'requests', 'usage', 'eaten'])
+      for (const id of Object.keys(r[key])) if (!kept.some(p => p.id === id)) delete r[key][id];
   }
   start(r, body) {
     this.authorize(r.hostHash, body.hostToken);
     if (r.status !== 'lobby') fail('对局已经开始', 409);
-    if (!r.players.every(p => p.joined)) fail('请等所有人和手动 AI 加入', 409);
+    if (!r.players.every(p => p.joined)) {
+      if (body.dropEmpty !== true) fail('请等所有人和手动 AI 加入，或带 dropEmpty:true 撤掉空座开局', 409);
+      this.reseat(r, r.players.filter(p => p.joined));
+    }
     const autoCount = p => p.kind === 'ai' && p.provider !== 'manual';
     const busy = [...this.rooms.values()].filter(other => other.id !== r.id && ['warming', 'running'].includes(other.status))
       .reduce((n, other) => n + other.players.filter(autoCount).length, 0);
     if (busy + r.players.filter(autoCount).length > 4) fail('已有 AI 对局在运行，自动模型同时最多 4 个', 409);
     r.status = 'warming'; r.waitSince = this.clock(); r.nextTick = this.clock();
-    this.save(r); this.launchBots(r); return {room: this.snapshot(r)};
+    this.save(r); this.launchBots(r);
+    const waitingFor = this.waitingFor(r); this.told.set(r.id, waitingFor);
+    this.notify(r, 'started', {waitingFor, deadlineAt: r.waitSince + this.waitMs(r)});
+    return {room: this.snapshot(r)};
   }
   launchBots(r) {
     if (!this.autoBots || !this.baseURL) return;
@@ -203,26 +279,76 @@ export class RoomService {
     // 吃到金身时旧路线已清空；照吃之前局面排的路线接不上现在的位置，收下用量、丢掉方向。
     const stale = Boolean(text) && Number.isInteger(body.basedOnTurn) && body.basedOnTurn < (r.replanFrom?.[p.id] ?? -1);
     if (stale) text = '';
+    // 空路线只用来记用量或报错；外部住户什么都没给，直接告诉它交错了，别默默收下。
+    if (!text && !stale && !body.usage && !body.error) fail('moves 不能为空：AI 每段至少 6 步');
     if (p.kind === 'ai' && text && text.length < 6) fail('AI 每段至少 6 步');
     if (text.length > 128 || r.queues[p.id].length + text.length > 128) fail('计划最多 128 步');
+    // 跟当时朝向相反的步子引擎会忽略、照原方向直走。接着已排的步子推一遍，告诉它是第几步，免得它以为自己拐了弯。
+    const reversed = [];
+    if (p.kind === 'ai' && text) {
+      const opposite = {U: 'D', D: 'U', L: 'R', R: 'L'};
+      let dir = r.state.snakes.find(s => s.id === p.id)?.dir;
+      for (const m of r.queues[p.id]) if (m !== opposite[dir]) dir = m;
+      [...text].forEach((m, i) => { if (m === opposite[dir]) reversed.push(i + 1); else dir = m; });
+    }
     if (p.kind === 'human' && text) {
       if (text.length !== 1) fail('真人每次提交一个方向');
       if (r.queues[p.id].length >= 4) fail('方向队列已满，请等下一拍', 409);
       r.queues[p.id].push(text);
     } else r.queues[p.id].push(...text);
     r.autoStraight ||= {};
-    if (text) delete r.autoStraight[p.id];
+    if (text) { delete r.autoStraight[p.id]; if (r.misses) delete r.misses[p.id]; }
     if (requestId) { r.requests[p.id].push(requestId); r.requests[p.id] = r.requests[p.id].slice(-64); }
     if (body.usage && p.kind === 'ai') for (const k of ['calls', 'promptTokens', 'completionTokens'])
       r.usage[p.id][k] += integer(body.usage[k], 0, 0, k === 'calls' ? 100 : 1000000);
     if (body.error) { r.autoStraight[p.id] = true; r.usage[p.id].errors++; r.telemetry.push({turn: r.state.turn, playerId: p.id, type: 'model_error', code: /^[A-Z_]{1,32}$/.test(body.errorCode || '') ? body.errorCode : 'UNKNOWN'}); }
-    this.save(r); return {room: this.snapshot(r), remaining: r.queues[p.id].length, ...(stale ? {stale: true} : {})};
+    this.save(r); return {room: this.snapshot(r), remaining: r.queues[p.id].length, ...(stale ? {stale: true} : {}),
+      ...(reversed.length ? {ignoredReverse: reversed, warning: `第 ${reversed.join('、')} 步跟当时的朝向相反，会被忽略、照原方向直走`} : {})};
   }
-  look(r, id) {
-    if (!r.players.some(p => p.id === id)) fail('座位不存在', 404);
+  look(r, id, token) {
+    const p = r.players.find(p => p.id === id);
+    if (!p) fail('座位不存在', 404);
+    // 排好的步子只给本人看：带这个座位的凭证（X-Seat-Token）才返回 queuedMoves，别的玩家偷看不到你的路线。
+    const own = typeof token === 'string' && token.length > 0 && digest(token) === p.tokenHash;
     return {room: this.snapshot(r), board: renderText(r.state, r.game.config, id),
-      viewport: viewportFor(r.state, id),
-      remaining: r.queues[id].length, queuedMoves: r.queues[id].join(''), turn: r.state.turn, tickMs: r.tickMs};
+      viewport: viewportFor(r.state, id), remaining: r.queues[id].length,
+      ...(own ? {queuedMoves: r.queues[id].join('')} : {}), turn: r.state.turn, tickMs: r.tickMs,
+      yourTurn: this.waitingFor(r).includes(id), howToPlay: this.howToPlay(r)};
+  }
+  // 给外部 AI 看的出手规矩，跟着这间房的设置写。
+  howToPlay(r) {
+    const seconds = Math.round(this.waitMs(r) / 1000), misses = r.missesBeforeAfk ?? 1;
+    return [
+      '出手（plan）：moves 用 U上 D下 L左 R右，一次给 6–128 步，排队总共最多 128 步。',
+      '不能直接掉头：跟当时朝向（棋盘上的「朝 X」，排了步子就是排完以后的朝向）相反的那一步会被忽略、照原方向直走；交路线的回复里 ignoredReverse 会列出是第几步。',
+      '你已经排好的步子（queuedMoves，带自己的座位凭证才看得到）先走完，新给的接在后面。',
+      '每次出手带一个 requestId，重试时用同一个，不会重复排队；带 basedOnTurn（填这次看到的 turn）：你吃到金身时旧路线会被清掉，照更早局面排的会被丢掉，请重新排。',
+      r.mode === 'ai' ? `这间房等所有活着的 AI 都排了步子才往下走，每轮最多等 ${seconds} 秒；` +
+        (misses > 1 ? `超时一次替你直走一步、再等一轮，连着超时 ${misses} 次以后一直替你直走，直到你再交路线。` : '超时以后一直替你直走，直到你再交路线。') :
+        `这间房有真人，按真实时间每 ${r.tickMs} 毫秒走一步，不等你；步子用完会一直直走。`,
+      '挂着等（wait）：轮到你、你出局或对局结束才返回，最长 55 秒；没等到就再挂一次。',
+    ].join('\n');
+  }
+  // 长轮询：轮到这个座位交路线、它出局、对局结束或被解散才返回；带 after 时局面走过那一回合也返回。
+  async wait(r, id, token, {after, timeoutMs, closed = () => false} = {}) {
+    if (!r.players.some(p => p.id === id)) fail('座位不存在', 404);
+    const limit = timeoutMs == null || timeoutMs === '' ? 50000 : integer(timeoutMs, 50000, 0, 55000);
+    const since = after == null || after === '' ? null : integer(after, 0, 0, 1e9);
+    const why = () => {
+      if (['cancelled', 'finished'].includes(r.status)) return r.status;
+      if (r.status === 'lobby') return null;
+      if (!r.state.snakes.find(s => s.id === id)?.alive) return 'dead';
+      if (this.waitingFor(r).includes(id)) return 'your_turn';
+      return since != null && r.state.turn > since ? 'turn' : null;
+    };
+    const end = Date.now() + limit;
+    let reason = why();
+    while (!reason && Date.now() < end && !closed()) {
+      await new Promise(resolve => { const t = setTimeout(resolve, 100); t.unref?.(); });
+      reason = why();
+    }
+    if (r.status === 'cancelled') return {reason: 'cancelled', roomId: r.id, status: r.status};
+    return {reason: reason || 'timeout', ...this.look(r, id, token)};
   }
   expire(r, now = this.clock()) {
     if (r.status === 'finished' || rules(r).victory !== 'score' || r.deadlineAt == null || now < r.deadlineAt) return false;
@@ -233,22 +359,28 @@ export class RoomService {
   }
   pump() {
     const now = this.clock();
-    for (const r of this.rooms.values()) {
+    for (const r of [...this.rooms.values()]) {
+      // 没人动的大厅房间过期删掉，免得占满房间上限。
+      if (r.status === 'lobby' && now - (r.activeAt ?? Date.parse(r.createdAt)) > this.lobbyTtlMs) { this.drop(r, 'idle'); continue; }
       if (!['warming', 'running'].includes(r.status)) continue;
       // Check before readiness and nextTick: a slow or offline AI cannot pause time.
       if (this.expire(r, now)) continue;
       const ais = r.players.filter(p => p.kind === 'ai' && r.state.snakes.find(s => s.id === p.id)?.alive);
       r.autoStraight ||= {};
-      const frozenNext = id => isFrozen(r.state.snakes.find(s => s.id === id), r.state.turn + 1);
+      const frozenNext = id => this.frozenNext(r, id);
       const ready = ais.every(p => r.queues[p.id].length > 0 || r.autoStraight[p.id] || frozenNext(p.id));
+      const waitMs = this.waitMs(r), waiting = this.waitingFor(r), told = this.told.get(r.id) || [];
+      const fresh = waiting.filter(id => !told.includes(id));
+      this.told.set(r.id, waiting);
+      if (fresh.length) this.notify(r, 'waiting', {waitingFor: waiting, fresh, deadlineAt: r.mode === 'ai' ? r.waitSince + waitMs : null});
       if (r.status === 'warming') {
-        if (!ready && now - r.waitSince < this.aiTimeoutMs) continue;
+        if (!ready && now - r.waitSince < waitMs) continue;
         r.telemetry.push({type: 'warmup', elapsedMs: now - r.waitSince, turn: r.state.turn});
         r.startedAt ??= now;
         if (rules(r).victory === 'score') r.deadlineAt ??= r.startedAt + rules(r).durationSeconds * 1000;
         r.status = 'running'; r.nextTick = now;
       }
-      if (r.mode === 'ai' && !ready && now - r.waitSince < this.aiTimeoutMs) continue;
+      if (r.mode === 'ai' && !ready && now - r.waitSince < waitMs) continue;
       if (now < r.nextTick) continue;
       const moves = {};
       for (const s of r.state.snakes.filter(s => s.alive)) {
@@ -257,7 +389,9 @@ export class RoomService {
         const direction = r.queues[s.id].shift();
         moves[s.id] = direction || s.dir;
         if (!direction && r.players.find(p => p.id === s.id).kind === 'ai') {
-          r.autoStraight[s.id] = true;
+          // 纯 AI 房间设了 missesBeforeAfk 时，超时先只替它直走这一步、下一轮接着等；连着超时这么多次才算挂机。
+          const misses = (r.misses ||= {})[s.id] = (r.misses[s.id] || 0) + 1;
+          if (r.mode !== 'ai' || misses >= (r.missesBeforeAfk ?? 1)) r.autoStraight[s.id] = true;
           r.telemetry.push({turn: r.state.turn, playerId: s.id, type: r.mode === 'ai' ? 'ai_timeout_straight' : 'plan_empty_straight'});
         }
       }
@@ -278,6 +412,7 @@ export class RoomService {
     }
   }
   finish(r) {
+    const fresh = r.status !== 'finished';
     r.finishedAt ??= r.status === 'finished' ? null : this.clock();
     r.status = 'finished';
     const modeRules = rules(r);
@@ -310,6 +445,9 @@ export class RoomService {
     this.save(r);
     atomicJSON(path.join(this.dataDir, 'replays', `${r.id}.json`), this.replay(r));
     for (const c of this.children) if (c.seat.startsWith(`${r.id}:`)) c.kill('SIGTERM');
+    this.told.delete(r.id);
+    if (fresh) this.notify(r, 'finished', {winner: r.settlement.winner, endReason: r.settlement.endReason,
+      players: r.settlement.players.map(({id, name, score, length, alive, won}) => ({id, name, score, length, alive, won}))});
   }
   replay(r) {
     return copy({...r.game, players: r.players.map(({tokenHash, ...p}) => p), usage: r.usage,
@@ -358,16 +496,21 @@ export async function createServer(options = {}) {
       else if (req.method === 'GET' && route[0] === 'catalog' && route.length === 1) result = service.catalog();
       else if (req.method === 'GET' && route[0] === 'leaderboard' && route.length === 1) result = service.leaderboard();
       else if (route[0] === 'rooms') {
-        if (route.length === 1 && req.method === 'GET') result = {rooms: [...service.rooms.values()].slice(-32).map(r => service.snapshot(r))};
+        if (route.length === 1 && req.method === 'GET') {
+          const status = url.searchParams.get('status');
+          result = {rooms: [...service.rooms.values()].filter(r => !status || r.status === status).slice(-32).map(r => service.snapshot(r))};
+        }
         else if (route.length === 1 && req.method === 'POST') { result = service.create(body); res.statusCode = 201; }
         else {
           const r = service.get(route[1]), action = route[2];
           if (route.length > 3) fail('接口不存在', 404);
           if (req.method === 'GET' && !action) result = service.snapshot(r);
-          else if (req.method === 'GET' && action === 'look') result = service.look(r, url.searchParams.get('as'));
+          else if (req.method === 'GET' && action === 'look') result = service.look(r, url.searchParams.get('as'), req.headers['x-seat-token']);
+          else if (req.method === 'GET' && action === 'wait') result = await service.wait(r, url.searchParams.get('as'), req.headers['x-seat-token'],
+            {after: url.searchParams.get('after'), timeoutMs: url.searchParams.get('timeoutMs'), closed: () => req.socket.destroyed});
           else if (req.method === 'GET' && action === 'replay') result = service.replay(r);
           else if (req.method === 'GET' && action === 'settlement') result = {settlement: r.settlement};
-          else if (req.method === 'POST' && ['join','start','plan'].includes(action)) result = service[action](r, body);
+          else if (req.method === 'POST' && ['join','start','plan','leave','cancel'].includes(action)) result = service[action](r, body);
           else fail('接口不存在', 404);
         }
       } else fail('接口不存在', 404);

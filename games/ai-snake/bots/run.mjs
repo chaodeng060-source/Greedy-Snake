@@ -146,7 +146,8 @@ export async function runBot(options = {}) {
   const done = reason => ({reason, ...totals, provider: provider?.provider, model: provider?.model});
   try {
     while (!signal?.aborted) {
-      const look = await requestJSON(`${url}/look?as=${encodeURIComponent(player)}`, {fetchImpl, signal});
+      // 排好的步子只有带座位凭证才看得到。
+      const look = await requestJSON(`${url}/look?as=${encodeURIComponent(player)}`, {fetchImpl, signal, headers: {'X-Seat-Token': token}});
       // The budget belongs to the game, including calls admitted before a restart.
       const persisted = look.room.usage?.[player];
       for (const key of Object.keys(totals)) totals[key] = Math.max(totals[key], count(persisted?.[key]));

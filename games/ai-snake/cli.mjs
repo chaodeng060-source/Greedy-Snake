@@ -149,7 +149,7 @@ function publicResult(value) {
 /** Online commands use --url; without it the original file-based commands still work. */
 export async function runCLI(argv = process.argv.slice(2), {env = process.env, fetchImpl, output = console.log} = {}) {
   const a = args(argv), command = a._[0]?.replace(/^room-/, "");
-  const online = a.url || a.session || a._[0]?.startsWith("room-") || ["join", "plan", "start", "replay", "leaderboard", "rooms", "catalog", "settlement"].includes(command);
+  const online = a.url || a.session || a._[0]?.startsWith("room-") || ["join", "plan", "start", "wait", "replay", "leaderboard", "rooms", "catalog", "settlement"].includes(command);
   if (!online) { offline(a); return; }
   if (a.session === true || a.url === true) throw new SafeError("--session 和 --url 需要参数", "CONFIG");
   const sessionFile = a.session ? path.resolve(a.session) : undefined;
@@ -159,7 +159,9 @@ export async function runCLI(argv = process.argv.slice(2), {env = process.env, f
   const room = a.room || (command === "plan" ? (a._.length > 2 ? a._[1] : undefined) : a._[1]) || session.roomId;
   if (room && session.roomId && room !== session.roomId) throw new SafeError("session 属于另一个房间", "CONFIG");
   const playerId = a.as || a.player || session.playerId;
-  const request = (route, body) => requestJSON(`${url}${route}`, {body, fetchImpl});
+  const request = (route, body, headers, timeoutMs) => requestJSON(`${url}${route}`, {body, fetchImpl, headers, ...(timeoutMs ? {timeoutMs} : {})});
+  const seatToken = env.AI_SNAKE_PLAYER_TOKEN || session.token;
+  const seatHeaders = seatToken ? {"X-Seat-Token": seatToken} : {};
   const roomPath = `/rooms/${encodeURIComponent(room)}`;
   let result;
   if (command === "create") {
@@ -177,7 +179,11 @@ export async function runCLI(argv = process.argv.slice(2), {env = process.env, f
       result = await request(`${roomPath}/join`, {kind: a.kind || "ai", ...(a.name ? {name: a.name} : {}), ...(playerId ? {playerId} : {})});
     } else if (command === "look") {
       if (!playerId) throw new SafeError("look 需要 --as PLAYER 或 session 的座位", "CONFIG");
-      result = await request(`${roomPath}/look?as=${encodeURIComponent(playerId)}`);
+      result = await request(`${roomPath}/look?as=${encodeURIComponent(playerId)}`, undefined, seatHeaders);
+    } else if (command === "wait") {
+      if (!playerId) throw new SafeError("wait 需要 --as PLAYER 或 session 的座位", "CONFIG");
+      const after = a.after && a.after !== true ? `&after=${encodeURIComponent(a.after)}` : "";
+      result = await request(`${roomPath}/wait?as=${encodeURIComponent(playerId)}${after}`, undefined, seatHeaders, 60000);
     } else if (command === "plan") {
       const token = env.AI_SNAKE_PLAYER_TOKEN || session.token;
       if (!playerId || !token) throw new SafeError("plan 需要座位和 session 或 AI_SNAKE_PLAYER_TOKEN", "CONFIG");
@@ -187,9 +193,9 @@ export async function runCLI(argv = process.argv.slice(2), {env = process.env, f
     } else if (command === "start") {
       const hostToken = env.AI_SNAKE_HOST_TOKEN || session.hostToken;
       if (!hostToken) throw new SafeError("start 需要房主 session 或 AI_SNAKE_HOST_TOKEN", "CONFIG");
-      result = await request(`${roomPath}/start`, {hostToken});
+      result = await request(`${roomPath}/start`, {hostToken, ...(a["drop-empty"] ? {dropEmpty: true} : {})});
     } else if (["replay", "settlement"].includes(command)) result = await request(`${roomPath}/${command}`);
-    else throw new SafeError("房间命令：room-create | join | look | plan | start | replay | leaderboard | rooms | catalog | settlement", "CONFIG");
+    else throw new SafeError("房间命令：room-create | join | look | wait | plan | start [--drop-empty] | replay | leaderboard | rooms | catalog | settlement", "CONFIG");
   }
   if (result.token || result.hostToken) {
     if (sessionFile) saveSession(sessionFile, {...(command === "create" ? {} : session), url, roomId: result.room.id,

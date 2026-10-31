@@ -7,10 +7,15 @@ JSON errors `{error}`; all mutations use POST. No credentials in public snapshot
 
 - GET `/health` → `{ok:true}`
 - GET `/catalog` → `{models:[{provider,model,name,skin}]}`
-- GET `/rooms` → `{rooms:[snapshot]}`
+- GET `/rooms[?status=lobby|warming|running|finished]` → `{rooms:[snapshot]}` (latest 32 after the filter)
 - POST `/rooms` → `{room,hostToken,playerId?,token?}`. Body:
   `{mode:'ai'|'mixed', victory?:'survival'|'score', world?:'arena'|'roam', durationSeconds?:number,
-  humans:[{name,skin,skinCode?}], ais:[{name,provider:'opencode'|'ollama'|'openai'|'manual',model,skin}], seed?,tickMs?,maxTurns?,wrap?}`.
+  humans:[{name,skin,skinCode?}], ais:[{name,provider:'opencode'|'ollama'|'openai'|'manual',model,skin}], seed?,tickMs?,maxTurns?,wrap?,
+  planWaitSeconds?:5–600, missesBeforeAfk?:1–5}`.
+  `planWaitSeconds` (default: service `aiTimeoutMs`, 60) is how long an AI-only room waits each round for missing plans and for warmup.
+  `missesBeforeAfk` (default1): in AI-only rooms a seat that misses the wait gets ONE straight step and is waited for again;
+  only after that many consecutive misses it goes straight until its next nonempty plan. Default1 keeps the original behavior.
+  Non-finished room cap is `AI_SNAKE_MAX_ROOMS` (default8, max64). See AGENT_API.md for the agent-platform flow.
   Only providers listed by GET `/catalog` are accepted. `openai` is any OpenAI-compatible endpoint configured on the server
   (`AI_SNAKE_OPENAI_BASE_URL`, `AI_SNAKE_OPENAI_API_KEY`, `AI_SNAKE_OPENAI_MODEL` comma list); its `model` must be one of that list.
   `AI_SNAKE_PROVIDERS` (comma list) narrows the open providers; `manual` is always available.
@@ -21,13 +26,25 @@ JSON errors `{error}`; all mutations use POST. No credentials in public snapshot
   First human belongs to creator, second joins separately. Manual AI must join before start. No automatic start or model calls on create.
 - POST `/rooms/:id/join` `{name?,kind:'human'|'ai',playerId?}` → `{room,playerId,token}`.
   Claims a reserved seat. Auto model seats cannot be claimed.
-- POST `/rooms/:id/start` `{hostToken}` → `{room}`. Initial AI plans warm up before movement and before the score clock starts.
+- POST `/rooms/:id/leave` `{playerId,token}` → `{room}`. Lobby only; the seat reopens and the old token stops working.
+- POST `/rooms/:id/cancel` `{hostToken}` → `{ok,roomId,status:'cancelled'}`. Lobby only; the room file is deleted, no leaderboard entry.
+  Lobby rooms with no create/join/leave for `AI_SNAKE_LOBBY_TTL_MINUTES` (default30) are deleted the same way.
+- POST `/rooms/:id/start` `{hostToken,dropEmpty?:true}` → `{room}`. Initial AI plans warm up before movement and before the score clock starts.
+  Without `dropEmpty` every seat must be joined. With it, unjoined seats are removed and the map/spawns are rebuilt for the remaining
+  players with the same seed and settings (at least one joined seat).
 - GET `/rooms/:id` → snapshot
-- GET `/rooms/:id/look?as=ID` → `{room,board,viewport:{x,y,width,height},remaining,queuedMoves,turn,tickMs}`.
+- GET `/rooms/:id/look?as=ID` (header `X-Seat-Token` optional) → `{room,board,viewport:{x,y,width,height},remaining,queuedMoves?,turn,tickMs,yourTurn,howToPlay}`.
   Board describes CURRENT position; queuedMoves execute before new moves. Remaining is own queue length.
+  `queuedMoves` is returned ONLY when `X-Seat-Token` is that seat's token, so players cannot read each other's routes.
+  `howToPlay` is a Chinese summary of this room's plan rules (step limits, reversal, requestId/basedOnTurn, pacing and AFK) for agent prompts.
   Viewport x/y are GLOBAL origin coordinates; width/height are finite view dimensions. Arena origin is0,0.
-- POST `/rooms/:id/plan` `{playerId,token,moves:'URDL...',requestId?,usage?:{calls,promptTokens,completionTokens},error?,errorCode?}`
-  → `{room,remaining}`. AI plans append to queue, each nonempty plan6–128 steps, total128.
+- GET `/rooms/:id/wait?as=ID&after?=TURN&timeoutMs?=0–55000` (default50000; header `X-Seat-Token` optional) → `{reason,...look}`.
+  Long poll. Returns as soon as `reason` is `your_turn` (the seat is in `waitingFor`), `dead`, `finished`, or `turn` (state.turn > after);
+  `cancelled` returns `{reason,roomId,status}`; otherwise `timeout` at the limit. Lobby rooms wait until start.
+- POST `/rooms/:id/plan` `{playerId,token,moves:'URDL...',requestId?,basedOnTurn?,usage?:{calls,promptTokens,completionTokens},error?,errorCode?}`
+  → `{room,remaining,stale?,ignoredReverse?,warning?}`. AI plans append to queue, each nonempty plan6–128 steps, total128.
+  Empty moves are rejected (400) unless the request carries `usage` or `error` (the built-in runner's bookkeeping).
+  `ignoredReverse` lists 1-based steps that reverse the direction at that point (after already queued moves); the engine ignores them.
   Current implementation requires6 even for the final partial plan; terminal game truncates unused moves.
   Humans append one direction per request, ordered queue capacity4. Engine ignores opposite turns.
   Duplicate requestId is ignored. Usage is an additive delta; bot admits `calls:1` with empty moves BEFORE its request,
@@ -47,7 +64,15 @@ JSON errors `{error}`; all mutations use POST. No credentials in public snapshot
 Snapshot includes `{id,status:'lobby'|'warming'|'running'|'finished',mode,config,state,
 players:[{id,kind,name,identity,provider,model,skin,skinCode?,joined,testBot}],
 plans:{ID:{remaining}},usage:{ID:{calls,promptTokens,completionTokens,errors}},settlement,tickMs,createdAt,
-victory,world,durationSeconds,startedAt,deadlineAt,remainingMs}`.
+victory,world,durationSeconds,startedAt,deadlineAt,remainingMs,openSeats,waitingFor,waitDeadlineAt,planWaitSeconds,missesBeforeAfk}`.
+
+`openSeats` lists claimable lobby seats `{id,kind}`. `waitingFor` lists living AI seats (not frozen next turn, not AFK) whose queue is empty;
+in AI-only rooms the room is waiting for exactly these, until `waitDeadlineAt` (ms; null otherwise).
+
+Webhook: when `AI_SNAKE_NOTIFY_URL` is set (server env only), the service POSTs `{event,roomId,status,turn,at,...}` with
+`Authorization: Bearer AI_SNAKE_NOTIFY_TOKEN` if set: `joined`/`left` `{playerId,name?}`, `started` `{waitingFor,deadlineAt}`,
+`waiting` `{waitingFor,fresh,deadlineAt}` when seats newly need plans, `finished` `{winner,endReason,players}`, `cancelled` `{reason:'host'|'idle'}`.
+Fire and forget (5s timeout, no retry); never includes tokens.
 
 startedAt/deadlineAt are numeric milliseconds (null before actual play); createdAt retains its ISO string.
 Score countdown starts AFTER warmup. remainingMs is computed from the service clock, includes all later AI/inference waits,
@@ -58,8 +83,8 @@ BEFORE settlement/replay persistence, and stops bot processes. Shared engine rep
 
 ## Victory, world and pacing are independent
 
-- `mode` selects pacing: ai waits for all living AI queues (up to60sec); mixed runs every tickMs after warmup without midgame waits.
-  After an AI errors or times out its first queue wait, server continues it straight until another plan arrives.
+- `mode` selects pacing: ai waits for all living AI queues (up to `planWaitSeconds`, default60sec); mixed runs every tickMs after warmup without midgame waits.
+  After an AI errors, or times out `missesBeforeAfk` consecutive queue waits (default1; mixed rooms always1), server continues it straight until another plan arrives.
 - `victory:'survival'`: last living snake wins; simultaneous final deaths draw. At the safety turn cap, survival then score decide;
   equal highest scores draw, without a length tiebreaker. A singleplayer room may run to its turn cap.
 - `victory:'score'`: highest cumulative score across ALL entrants, including dead snakes, wins at the real deadline.

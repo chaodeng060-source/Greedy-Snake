@@ -10,7 +10,8 @@ const mime = {'.html':'text/html; charset=utf-8','.js':'text/javascript; charset
 const server = http.createServer((req,res) => {
   const url = new URL(req.url, 'http://localhost');
   if (url.pathname.startsWith('/api/ai-snake/')) {
-    const upstream = http.request(api.url + req.url.slice('/api/ai-snake'.length), {method:req.method,headers:{'content-type':'application/json'}}, response => {
+    const seat = req.headers['x-seat-token'];
+    const upstream = http.request(api.url + req.url.slice('/api/ai-snake'.length), {method:req.method,headers:{'content-type':'application/json',...(seat ? {'x-seat-token':seat} : {})}}, response => {
       res.writeHead(response.statusCode, {'content-type':'application/json','cache-control':'no-store'}); response.pipe(res);
     });
     upstream.on('error',()=>{if(!res.headersSent) res.writeHead(502);res.end();}); req.pipe(upstream); return;
