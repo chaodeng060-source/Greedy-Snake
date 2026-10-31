@@ -6,6 +6,7 @@ import crypto from 'node:crypto';
 import {spawn} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
 import {newGame, createState, step, renderText, mapSize, finishGame, viewportFor, isFrozen} from '../../web/public/ai-snake/engine.js';
+import {resolveProvider, autoProviders, openaiModels} from './bots/providers.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const copy = x => JSON.parse(JSON.stringify(x));
@@ -63,12 +64,21 @@ export class RoomService {
     const finished = [...this.rooms.values()].filter(r => r.status === 'finished');
     for (const r of finished.slice(0, -32)) this.rooms.delete(r.id);
   }
+  // 只列这台服务器真能用的：OpenCode Go 找得到钥匙才列；openai 列 AI_SNAKE_OPENAI_MODEL 里的每一个。
   catalog() {
-    return {models: [
-      {provider: 'opencode', model: 'deepseek-v4.1-flash', name: 'DS', skin: 'crab'},
-      {provider: 'ollama', model: 'qwen3:8b', name: 'qwen3:8b', skin: 'crab'},
-      {provider: 'manual', model: 'manual', name: '手动 AI', skin: 'crab'},
-    ]};
+    const env = process.env, providers = autoProviders(env), models = [];
+    if (providers.includes('opencode')) {
+      try { resolveProvider({provider: 'opencode', env}); models.push({provider: 'opencode', model: 'deepseek-v4.1-flash', name: 'DS', skin: 'crab'}); }
+      catch { /* 没配 OpenCode Go 钥匙就不列 */ }
+    }
+    if (providers.includes('ollama')) {
+      const model = env.AI_SNAKE_OLLAMA_MODEL?.trim() || 'qwen3:8b';
+      models.push({provider: 'ollama', model, name: model, skin: 'crab'});
+    }
+    if (providers.includes('openai')) for (const model of openaiModels(env))
+      models.push({provider: 'openai', model, name: model, skin: 'crab'});
+    models.push({provider: 'manual', model: 'manual', name: '手动 AI', skin: 'crab'});
+    return {models};
   }
   get(id) {
     if (!/^[a-f0-9-]{36}$/.test(id || '')) fail('房间不存在', 404);
@@ -110,10 +120,13 @@ export class RoomService {
     const maxTurns = victory === 'score' ? Math.max(requestedTurns, durationSeconds * 25 + 1) : requestedTurns;
     const players = [...humans.map(p => ({...p, kind: 'human'})), ...ais.map(p => ({...p, kind: 'ai'}))].map((p, i) => {
       const provider = p.kind === 'human' ? null : (p.provider || 'manual');
-      if (provider && !['manual', 'opencode', 'ollama'].includes(provider)) fail('未知模型通道');
+      if (provider && provider !== 'manual' && !autoProviders().includes(provider)) fail('未知模型通道');
       const name = String(p.name || (p.kind === 'human' ? `玩家${i + 1}` : provider)).trim().slice(0, 40);
       if (!name) fail('名字不能为空');
-      const model = String(p.model || (provider === 'opencode' ? 'deepseek-v4.1-flash' : provider === 'ollama' ? 'qwen3:8b' : 'manual')).slice(0, 100);
+      const model = String(p.model || (provider === 'opencode' ? 'deepseek-v4.1-flash' : provider === 'ollama' ? (process.env.AI_SNAKE_OLLAMA_MODEL?.trim() || 'qwen3:8b') :
+        provider === 'openai' ? openaiModels()[0] : 'manual')).slice(0, 100);
+      // openai 通道花的是服务器主人的钥匙：只认服务器列出来的模型，浏览器不能随便点名。
+      if (provider === 'openai' && !openaiModels().includes(model)) fail('这个模型没有开放');
       // Auto providers are fixed adapters, never arbitrary browser-supplied URLs.
       const identity = p.kind === 'human' ? `human:${name}` : `ai:${provider}:${model}:${name}`;
       return {id: `p${i + 1}`, kind: p.kind, name: p.testBot ? `测试机器人 ${name}` : name, identity,

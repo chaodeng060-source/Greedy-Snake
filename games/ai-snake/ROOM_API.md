@@ -10,7 +10,10 @@ JSON errors `{error}`; all mutations use POST. No credentials in public snapshot
 - GET `/rooms` → `{rooms:[snapshot]}`
 - POST `/rooms` → `{room,hostToken,playerId?,token?}`. Body:
   `{mode:'ai'|'mixed', victory?:'survival'|'score', world?:'arena'|'roam', durationSeconds?:number,
-  humans:[{name,skin,skinCode?}], ais:[{name,provider:'opencode'|'ollama'|'manual',model,skin}], seed?,tickMs?,maxTurns?,wrap?}`.
+  humans:[{name,skin,skinCode?}], ais:[{name,provider:'opencode'|'ollama'|'openai'|'manual',model,skin}], seed?,tickMs?,maxTurns?,wrap?}`.
+  Only providers listed by GET `/catalog` are accepted. `openai` is any OpenAI-compatible endpoint configured on the server
+  (`AI_SNAKE_OPENAI_BASE_URL`, `AI_SNAKE_OPENAI_API_KEY`, `AI_SNAKE_OPENAI_MODEL` comma list); its `model` must be one of that list.
+  `AI_SNAKE_PROVIDERS` (comma list) narrows the open providers; `manual` is always available.
   Defaults: survival, arena, durationSeconds60, maxTurns600, wraptrue, tickMs350.
   durationSeconds must be a JSON integer1–3600; it controls the real score deadline only.
   Roam forces wrapfalse. Score raises maxTurns to at least `durationSeconds*25+1` (AI-only moves at most once per40ms),
@@ -69,7 +72,7 @@ BEFORE settlement/replay persistence, and stops bot processes. Shared engine rep
 ## Bots and limits
 
 Server spawns one runner per automatic AI on start:
-`node bots/run.mjs --url BASE --room ID --player ID --provider opencode|ollama --model MODEL --max-calls N`,
+`node bots/run.mjs --url BASE --room ID --player ID --provider opencode|ollama|openai --model MODEL --max-calls N`,
 where `N = callBudget(config, tickMs)`: enough 32-move plans for the expected turns plus 4 retries, clamped to 8–40
 (score games use durationSeconds/tickMs; AI-only score games assume the 40ms fastest tick).
 Seat token is only in AI_SNAKE_PLAYER_TOKEN. Existing local auth/environment only; never log keys or provider response bodies.

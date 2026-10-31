@@ -1,6 +1,6 @@
 // 皮肤码：一个皮肤就是一小段 JSON，人能捏，AI 也能照着图一格一格写。
 // 分享时压成一串「SNK1.」开头的码，粘到哪儿都能还原。
-import { PAL, SKIN_LOOK } from "./sprites.js?v=20261031d";
+import { PAL, SKIN_LOOK } from "./sprites.js?v=20261031e";
 
 export const SKIN_FORMAT = "ai-snake-skin/1";
 export const HEAD = 10;

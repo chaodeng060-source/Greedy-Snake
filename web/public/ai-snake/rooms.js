@@ -1,6 +1,6 @@
-import { SKIN_LOOK, ROOM_LABELS } from "./sprites.js?v=20261031d";
-import { headIcon } from "./draw.js?v=20261031d";
-import { loadSkins, encodeSkin, decodeSkin, lookFromSkin } from "./skin.js?v=20261031d";
+import { SKIN_LOOK, ROOM_LABELS } from "./sprites.js?v=20261031e";
+import { headIcon } from "./draw.js?v=20261031e";
+import { loadSkins, encodeSkin, decodeSkin, lookFromSkin } from "./skin.js?v=20261031e";
 
 const STATUS = { lobby: "等待加入", warming: "AI 正在准备首轮行动", running: "进行中", finished: "已结束" };
 const VICTORIES = { survival: "生存赛", score: "限时得分" };
@@ -44,7 +44,8 @@ const requestId = () => globalThis.crypto?.randomUUID?.() || Date.now() + "-" + 
 // Authentication is sent in POST bodies only. Room links contain just a public id.
 export class RoomClient {
   constructor(base, { storage = globalThis.localStorage, fetcher = globalThis.fetch } = {}) {
-    const url = new URL(base || "/", globalThis.location?.origin || "http://localhost");
+    // 相对地址按当前页面解析：挂在子路径下（/snake/）时 "api/ai-snake" 指向 /snake/api/ai-snake。
+    const url = new URL(base || "/", globalThis.location?.href || "http://localhost/");
     if (!/^https?:$/.test(url.protocol) || url.username || url.password || url.search || url.hash) {
       throw new Error("服务地址只能包含 http(s) 地址与路径");
     }

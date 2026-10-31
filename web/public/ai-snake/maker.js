@@ -1,11 +1,11 @@
 // 捏皮肤：从现成的皮肤或一张图起头，在 10×10 的格子上一格一格改，存成皮肤码。
-import { PAL, PUMPKIN, drawSprite } from "./sprites.js?v=20261031d";
-import { drawSnake, headIcon, CELL } from "./draw.js?v=20261031d";
+import { PAL, PUMPKIN, drawSprite } from "./sprites.js?v=20261031e";
+import { drawSnake, headIcon, CELL } from "./draw.js?v=20261031e";
 import {
   HEAD, NECK_W, NECK_H, MAX_COLORS, EXAMPLE,
   normalizeSkin, encodeSkin, decodeSkin, skinFromBuiltin, blankSkin,
   loadSkins, saveSkins, addSkin, pixelize, findSubject, shade, hexToRgb,
-} from "./skin.js?v=20261031d";
+} from "./skin.js?v=20261031e";
 
 const $ = (s) => document.querySelector(s);
 const KEYS = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";

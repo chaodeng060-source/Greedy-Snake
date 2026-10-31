@@ -96,23 +96,30 @@ function projectedHint(look, player) {
 export async function requestPlan(provider, look, {player, steps = 32, fetchImpl, signal, timeoutMs = 55000, sessionId} = {}) {
   const messages = [{role: 'user', content: buildPrompt(look, player, steps)}];
   const ollama = provider.provider === 'ollama';
+  // openai 通道接的是别家接口：reasoning_effort、JSON 模式都按服务器配置给，不认就关掉。
+  const openai = provider.provider === 'openai';
   const body = ollama ? {model: provider.model, messages, stream: false, think: false,
     format: {type: 'object', properties: {moves: {type: 'string', pattern: '^[UDLR]+$'}}, required: ['moves'], additionalProperties: false},
     options: {temperature: 0, num_ctx: 4096, num_predict: 128}} : {
     model: provider.model, messages, stream: false, temperature: 0, max_tokens: 512,
-    reasoning_effort: 'none', response_format: {type: 'json_object'},
+    ...(!openai ? {reasoning_effort: 'none'} : provider.reasoningEffort ? {reasoning_effort: provider.reasoningEffort} : {}),
+    ...(!openai || provider.jsonMode !== false ? {response_format: {type: 'json_object'}} : {}),
   };
   const requestOptions = {
     body, fetchImpl, signal, timeoutMs: Math.min(55000, Math.max(1, timeoutMs)), label: provider.provider,
-    headers: ollama ? {} : {Authorization: `Bearer ${provider.apiKey}`,
-      'User-Agent': 'ai-snake-room/1.0', 'x-opencode-session': sessionId || `ai-snake/${look.room.id}/${player}`},
+    headers: ollama ? {} : {...(provider.apiKey ? {Authorization: `Bearer ${provider.apiKey}`} : {}),
+      'User-Agent': 'ai-snake-room/1.0', ...(openai ? provider.headers : {'x-opencode-session': sessionId || `ai-snake/${look.room.id}/${player}`})},
   };
   const data = ollama && provider.requestJSON ? await provider.requestJSON(body, requestOptions) :
     await requestJSON(`${provider.baseUrl}${ollama ? '/api/chat' : '/chat/completions'}`, requestOptions);
   const usage = usageOf(data, provider.provider);
   const content = ollama ? data.message?.content : data.choices?.[0]?.message?.content;
   let result;
-  try { result = JSON.parse(content); } catch { throw new SafeError('模型未返回有效的 moves JSON', 'MODEL_JSON', usage); }
+  // 关了 JSON 模式的接口常把 JSON 包在 ```json 里或前后带一句话，只取第一段花括号。
+  try { result = JSON.parse(content); } catch {
+    try { result = JSON.parse(String(content ?? '').match(/\{[\s\S]*\}/)?.[0]); }
+    catch { throw new SafeError('模型未返回有效的 moves JSON', 'MODEL_JSON', usage); }
+  }
   const minimum = Math.min(6, steps);
   // 模型常多给几步、夹空格或小写；只取它自己给的前 steps 步，不替它补步。
   const moves = typeof result?.moves === 'string' ? result.moves.toUpperCase().replace(/[\s,]/g, '') : '';

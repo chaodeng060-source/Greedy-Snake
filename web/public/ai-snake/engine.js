@@ -12,7 +12,7 @@ const DIR_ALIASES = {
 };
 
 import { PRIVATE_SKINS } from "./private-skins.js";
-export const SKINS = { crab: { name: "小螃蟹", letter: "K" }, ghost: { name: "小鬼", letter: "G" } };
+export const SKINS = { crab: { name: "小螃蟹", letter: "K" }, ghost: { name: "小鬼", letter: "G" }, bat: { name: "蝙蝠", letter: "B" } };
 
 // mulberry32：给糖的位置用，种子一样，糖落的地方就一样。
 function nextRandom(seed) {

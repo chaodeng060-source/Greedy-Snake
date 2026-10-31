@@ -1,5 +1,5 @@
 // 每个字符是一格像素，「.」是透明。
-import { PRIVATE_PALETTE, PRIVATE_LOOKS, PRIVATE_LABELS } from "./private-sprites.js?v=20261031d";
+import { PRIVATE_PALETTE, PRIVATE_LOOKS, PRIVATE_LABELS } from "./private-sprites.js?v=20261031e";
 export const ROOM_LABELS = { manual: "手动 AI", ...PRIVATE_LABELS };
 
 export const PAL = {
@@ -60,6 +60,8 @@ export const GHOST = [
   "W...W...b",
 ];
 
+export const BAT_UP = ["Z.......Z", "ZZ.ZZZ.ZZ", ".ZZZZZZZ.", "...Z.Z..."];
+export const BAT_DOWN = ["...ZZZ...", ".ZZZZZZZ.", "ZZ.Z.Z.ZZ", "Z.......Z"];
 
 // 小鬼：白色小幽灵。
 export const GHOST_HEAD = [
@@ -76,11 +78,27 @@ export const GHOST_HEAD = [
 ];
 export const GHOST_HAPPY = { 3: "WWWWWWWWWb", 4: "WXWXWWXWXb" };
 
+// 蝙蝠：紫色小蝙蝠，红眼睛。
+export const BAT_HEAD = [
+  "Z........Z",
+  "ZZ......ZZ",
+  "ZmZ....ZmZ",
+  "ZmmZZZZmmZ",
+  "ZmmmmmmmmZ",
+  "ZmrrmmrrmZ",
+  "ZmrrmmrrmZ",
+  "ZmmmWWmmmZ",
+  ".ZmmmmmmZ.",
+  "..ZZZZZZ..",
+];
+export const BAT_HAPPY = { 5: "ZmmmmmmmmZ", 6: "ZmrmmmmrmZ" };
+
 // 内置外观与捏出的外观共用渲染格式。
 export const SKIN_LOOK = {
   crab: { name: "小螃蟹", head: CRAB_HEAD, happy: CRAB_HAPPY, fill: "#b9603d", edge: "#7f3a20", hat: true, legs: true, label: "#ffb38f" },
   ...PRIVATE_LOOKS,
   ghost: { name: "小鬼", head: GHOST_HEAD, happy: GHOST_HAPPY, fill: "#eef0ff", edge: "#c3caef", hat: false, label: "#eef0ff" },
+  bat: { name: "蝙蝠", head: BAT_HEAD, happy: BAT_HAPPY, fill: "#8a7fb0", edge: "#07060d", hat: false, label: "#c9b8ff" },
 };
 
 export const GOLD = ["...GGG...", "..GSSSG..", ".GSqSSSG.", ".GSSqSSG.", ".GSqSSSG.", "..GSSSG..", "...GGG..."];

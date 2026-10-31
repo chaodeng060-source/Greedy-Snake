@@ -53,6 +53,18 @@ function expand(value, env, directory) {
   return value.trim();
 }
 
+/** AI_SNAKE_OPENAI_MODEL 可以写一个，也可以逗号分隔写几个；建房只能选这里列出的。 */
+export function openaiModels(env = process.env) {
+  return [...new Set((env.AI_SNAKE_OPENAI_MODEL || '').split(',').map(s => s.trim()).filter(Boolean))];
+}
+
+/** 服务器开放的自动 AI 通道。AI_SNAKE_PROVIDERS=openai,ollama 这样写可以只开其中几个；manual 总是可用。 */
+export function autoProviders(env = process.env) {
+  const listed = (env.AI_SNAKE_PROVIDERS || '').split(',').map(s => s.trim()).filter(Boolean);
+  const all = ['opencode', 'ollama', ...(env.AI_SNAKE_OPENAI_BASE_URL?.trim() ? ['openai'] : [])];
+  return listed.length ? all.filter(p => listed.includes(p)) : all;
+}
+
 /** Offline resolution only. apiKey is deliberately non-enumerable. */
 export function resolveProvider(input = {}, overrides = {}) {
   const options = typeof input === 'string' ? {provider: input, ...overrides} : input;
@@ -83,7 +95,29 @@ export function resolveProvider(input = {}, overrides = {}) {
     const url = env.AI_SNAKE_OLLAMA_URL || env.OLLAMA_URL || env.OLLAMA_HOST || configuredURL || 'http://127.0.0.1:11434';
     return {provider, model: model.replace(/^ollama\//, ''), baseUrl: baseURL(url).replace(/\/(?:v1|api)$/, ''), keySource: 'none (local Ollama)'};
   }
-  if (provider !== 'opencode') throw new SafeError('自动 bot 只支持 opencode 或 ollama', 'CONFIG');
+  // 任意 OpenAI 兼容接口（DeepSeek 官方、通义、OpenAI、自建 vLLM……）：地址、钥匙、能用的模型都只从服务器环境变量来。
+  if (provider === 'openai') {
+    const url = env.AI_SNAKE_OPENAI_BASE_URL?.trim();
+    if (!url) throw new SafeError('没有配置 AI_SNAKE_OPENAI_BASE_URL', 'CONFIG');
+    const allowed = openaiModels(env);
+    const model = options.model || allowed[0];
+    if (!model || !allowed.includes(model)) throw new SafeError('模型不在 AI_SNAKE_OPENAI_MODEL 列表里', 'CONFIG');
+    const apiKey = env.AI_SNAKE_OPENAI_API_KEY?.trim() || '';
+    // 有的接口要额外请求头（OpenCode Go 要 x-opencode-session，OpenRouter 要 HTTP-Referer），JSON 对象写在这里。
+    let headers = {};
+    if (env.AI_SNAKE_OPENAI_HEADERS?.trim()) {
+      try { headers = JSON.parse(env.AI_SNAKE_OPENAI_HEADERS); } catch { throw new SafeError('AI_SNAKE_OPENAI_HEADERS 须为 JSON 对象', 'CONFIG'); }
+      if (!headers || typeof headers !== 'object' || Array.isArray(headers) || Object.values(headers).some(v => typeof v !== 'string'))
+        throw new SafeError('AI_SNAKE_OPENAI_HEADERS 须为字符串值的 JSON 对象', 'CONFIG');
+    }
+    const result = {provider, model, baseUrl: baseURL(url).replace(/\/chat\/completions$/, ''),
+      keySource: apiKey ? 'env:AI_SNAKE_OPENAI_API_KEY' : 'none',
+      jsonMode: env.AI_SNAKE_OPENAI_JSON_MODE !== '0', reasoningEffort: env.AI_SNAKE_OPENAI_REASONING_EFFORT?.trim() || undefined};
+    Object.defineProperty(result, 'apiKey', {value: apiKey, enumerable: false});
+    Object.defineProperty(result, 'headers', {value: headers, enumerable: false});
+    return result;
+  }
+  if (provider !== 'opencode') throw new SafeError('自动 bot 只支持 opencode、ollama 或 openai', 'CONFIG');
 
   const goRecords = records.filter(c => c.data.provider?.['opencode-go']);
   const active = records.find(c => c.data.model?.startsWith('opencode-go/deepseek'));
