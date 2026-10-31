@@ -1,6 +1,6 @@
-import { SKIN_LOOK, ROOM_LABELS } from "./sprites.js?v=20261031c";
-import { headIcon } from "./draw.js?v=20261031c";
-import { loadSkins, encodeSkin, decodeSkin, lookFromSkin } from "./skin.js?v=20261031c";
+import { SKIN_LOOK, ROOM_LABELS } from "./sprites.js?v=20261031d";
+import { headIcon } from "./draw.js?v=20261031d";
+import { loadSkins, encodeSkin, decodeSkin, lookFromSkin } from "./skin.js?v=20261031d";
 
 const STATUS = { lobby: "等待加入", warming: "AI 正在准备首轮行动", running: "进行中", finished: "已结束" };
 const VICTORIES = { survival: "生存赛", score: "限时得分" };

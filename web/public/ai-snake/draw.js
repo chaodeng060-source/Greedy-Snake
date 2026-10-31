@@ -1,5 +1,5 @@
 // 画一条蛇：游戏和捏皮肤的预览共用这一份，捏出来什么样，进游戏就是什么样。
-import { PAL, HAT, GOLD, BAG, CANDY, CHERRY, SNOW, CROWN, SHIELD, drawSprite } from "./sprites.js?v=20261031c";
+import { PAL, HAT, GOLD, BAG, CANDY, CHERRY, SNOW, CROWN, SHIELD, drawSprite } from "./sprites.js?v=20261031d";
 
 export const CELL = 10;
 

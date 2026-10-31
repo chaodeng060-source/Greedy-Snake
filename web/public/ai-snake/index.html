@@ -80,7 +80,10 @@
   .room-error { color: #ffb1ac; }
   #room-controls { position: sticky; bottom: 0; background: var(--bg); padding: 6px 0; }
   #stage { max-width: 100%; }
-  .overlay { overflow-y: auto; touch-action: pan-y; }
+  /* 按钮多了菜单比棋盘高：普通 center 会把标题顶出框外、滚也滚不到；safe center 放不下时从顶上排起 */
+  .overlay { overflow-y: auto; touch-action: pan-y; justify-content: safe center; }
+  /* 手机竖屏棋盘只有三百来像素见方，菜单收紧一点，一屏装下 */
+  @media (max-width: 440px) { .overlay { gap: 6px; padding: 10px; } .overlay h1 { font-size: 20px; } .overlay .row { gap: 6px; } .overlay .btn { padding: 7px 12px; font-size: 14px; } }
   @media (max-height: 650px) { .overlay { justify-content: flex-start; gap: 6px; } .overlay h1 { font-size: 20px; } }
 </style>
 </head>
@@ -140,6 +143,6 @@
   <section id="room-details" class="hidden" aria-label="房间详情"></section>
   <div id="toast" class="hidden" role="status"></div>
   <!-- 页面本身每次都拿新的，脚本会被浏览器缓存：改了脚本就把 v 换一个 -->
-  <script type="module" src="./game.js?v=20261031c"></script>
+  <script type="module" src="./game.js?v=20261031d"></script>
 </body>
 </html>

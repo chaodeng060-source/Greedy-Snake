@@ -1,10 +1,10 @@
-import { newGame, createState, step, viewportFor, finishGame } from "./engine.js?v=20261031c";
-import { PAL, SKIN_LOOK, PUMPKIN, GHOST, drawSprite } from "./sprites.js?v=20261031c";
-import { drawSnake as paintSnake, headIcon, drawRewards, drawRemains, inViewport } from "./draw.js?v=20261031c";
-import { loadSkins, lookFromSkin, decodeSkin, addSkin } from "./skin.js?v=20261031c";
-import { initRooms } from "./rooms.js?v=20261031c";
+import { newGame, createState, step, viewportFor, finishGame } from "./engine.js?v=20261031d";
+import { PAL, SKIN_LOOK, PUMPKIN, GHOST, drawSprite } from "./sprites.js?v=20261031d";
+import { drawSnake as paintSnake, headIcon, drawRewards, drawRemains, inViewport } from "./draw.js?v=20261031d";
+import { loadSkins, lookFromSkin, decodeSkin, addSkin } from "./skin.js?v=20261031d";
+import { initRooms } from "./rooms.js?v=20261031d";
 
-const VERSION = "10/31 c";
+const VERSION = "10/31 d";
 
 const CELL = 10;
 const PAD = 6;
