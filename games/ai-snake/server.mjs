@@ -185,8 +185,11 @@ export class RoomService {
     if (r.status === 'finished') return {room: this.snapshot(r), remaining: 0};
     const requestId = String(body.requestId || '').slice(0, 80);
     if (requestId && r.requests[p.id].includes(requestId)) return {room: this.snapshot(r), remaining: r.queues[p.id].length};
-    const text = Array.isArray(body.moves) ? body.moves.join('') : String(body.moves || '');
+    let text = Array.isArray(body.moves) ? body.moves.join('') : String(body.moves || '');
     if (text && !/^[UDLR]+$/.test(text)) fail('只接受 UDLR 方向');
+    // 吃到金身时旧路线已清空；照吃之前局面排的路线接不上现在的位置，收下用量、丢掉方向。
+    const stale = Boolean(text) && Number.isInteger(body.basedOnTurn) && body.basedOnTurn < (r.replanFrom?.[p.id] ?? -1);
+    if (stale) text = '';
     if (p.kind === 'ai' && text && text.length < 6) fail('AI 每段至少 6 步');
     if (text.length > 128 || r.queues[p.id].length + text.length > 128) fail('计划最多 128 步');
     if (p.kind === 'human' && text) {
@@ -200,7 +203,7 @@ export class RoomService {
     if (body.usage && p.kind === 'ai') for (const k of ['calls', 'promptTokens', 'completionTokens'])
       r.usage[p.id][k] += integer(body.usage[k], 0, 0, k === 'calls' ? 100 : 1000000);
     if (body.error) { r.autoStraight[p.id] = true; r.usage[p.id].errors++; r.telemetry.push({turn: r.state.turn, playerId: p.id, type: 'model_error', code: /^[A-Z_]{1,32}$/.test(body.errorCode || '') ? body.errorCode : 'UNKNOWN'}); }
-    this.save(r); return {room: this.snapshot(r), remaining: r.queues[p.id].length};
+    this.save(r); return {room: this.snapshot(r), remaining: r.queues[p.id].length, ...(stale ? {stale: true} : {})};
   }
   look(r, id) {
     if (!r.players.some(p => p.id === id)) fail('座位不存在', 404);
@@ -247,6 +250,16 @@ export class RoomService {
       }
       r.game.moves.push(moves); step(r.state, r.game.config, moves);
       for (const e of r.state.events) if (e.type === 'eat') r.eaten[e.id]++;
+      // 全 AI 房间会等 AI 交路线：吃到金身的 AI 清掉旧路线，整局停下等它带着金身重新排。
+      // 有真人的房间按真实时间走，清了只会让它直走，路线照旧。想的次数用完了也不清，免得白等。
+      if (r.mode === 'ai') for (const e of r.state.events) {
+        if (e.type !== 'eat' || e.reward !== 'guard') continue;
+        const p = r.players.find(p => p.id === e.id);
+        if (p?.kind !== 'ai' || r.usage[p.id].calls >= callBudget(r.game.config, 40)) continue;
+        r.queues[p.id] = []; delete r.autoStraight[p.id];
+        (r.replanFrom ||= {})[p.id] = r.state.turn;
+        r.telemetry.push({turn: r.state.turn, playerId: p.id, type: 'guard_replan'});
+      }
       r.waitSince = now; r.nextTick = now + (r.mode === 'mixed' ? r.tickMs : 40);
       if (r.state.over) this.finish(r); else this.save(r);
     }

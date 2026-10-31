@@ -86,4 +86,8 @@ Rooms created from 2026-10-31 also set `config.guard` (POST `guard:false` opts o
 snakes for 8 turns — it passes through other bodies (frozen heads too) and survives head collisions while the other dies ("撞上金身");
 walls and self-bites still kill, and others hitting its body still die. Two shielded heads in one cell both survive and nobody eats there.
 Powerup rooms without `guard` keep their original reward draw.
+In `mode:'ai'` rooms (which wait for AI plans), an AI seat that eats a shield has its queue cleared and the room waits for a
+fresh plan (skipped once the seat's call budget is spent; mixed rooms keep the queue because they run in real time).
+Plans may carry `basedOnTurn` (the `look.turn` they were built from); a plan built before the shield turn is dropped
+(`stale:true`, usage still counted). Plans without `basedOnTurn` are accepted as before.
 A runner tolerates up to 3 consecutive model failures (each posts an error and counts a call); longer plans are truncated to the requested steps. Tests may set testBot; labelled test seats are excluded from aggregate AND grouped boards.

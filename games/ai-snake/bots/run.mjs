@@ -61,6 +61,9 @@ export function buildPrompt(look, player, steps = 32) {
       `! golden shield = for the next ${GUARD_TURNS} turns other snakes cannot kill you: you pass straight through other bodies (frozen ones too), and in a head collision you survive while the other snake dies. Walls and biting yourself still kill you.`,
       'A snake with a golden shield is still a wall to everyone else: hitting its body kills you, and never move your head into its head.',
     ] : []),
+    ...(look.room.config.guard && (snake?.guardUntil || 0) > look.turn ? [
+      `YOU HAVE A GOLDEN SHIELD for ${snake.guardUntil - look.turn} more turns: right now you may cut straight through other snakes to reach candy, and ramming another head kills them, not you. Plan so you are clear of other bodies before it runs out.`,
+    ] : []),
     look.room.config.world === 'roam' ?
       'Roam is an unbounded plane: never wrap, even if config.wrap is true. The board is a local viewport with a GLOBAL origin; every coordinate is GLOBAL. Leaving the viewport is not hitting a wall. Offscreen bodies can still collide.' :
       'Arena borders follow config.wrap: wrap if true, otherwise outer walls kill. Coordinates are global; viewport origin is (0,0).',
@@ -187,7 +190,8 @@ export async function runBot(options = {}) {
         failures = 0;
         lastLatencyMs = now() - started;
         totals.promptTokens += result.usage.promptTokens; totals.completionTokens += result.usage.completionTokens;
-        await post(result, `${callId}:result`);
+        // basedOnTurn：服务端在我吃到金身时会清掉旧路线，照更早局面排的这段会被它丢掉，下一圈重新排。
+        await post({...result, basedOnTurn: look.turn}, `${callId}:result`);
         if (totals.calls >= maxCalls) return done('max-calls');
       }
       await sleep(100, undefined, signal ? {signal} : undefined);
