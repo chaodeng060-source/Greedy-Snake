@@ -5,7 +5,8 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import {spawn} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
-import {newGame, createState, step, renderText, mapSize, finishGame, viewportFor, isFrozen} from '../../web/public/ai-snake/engine.js';
+import {newGame, createState, step, renderText, mapSize, finishGame, viewportFor, isFrozen, SKINS} from '../../web/public/ai-snake/engine.js';
+import {normalizeSkin, decodeSkin, encodeSkin} from '../../web/public/ai-snake/skin.js';
 import {resolveProvider, autoProviders, openaiModels} from './bots/providers.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -23,6 +24,13 @@ export function atomicJSON(file, data) {
   const temp = `${file}.${process.pid}.tmp`;
   fs.writeFileSync(temp, JSON.stringify(data), {mode: 0o600});
   fs.renameSync(temp, file);
+}
+// 自己捏的皮肤：skinData 是皮肤 JSON 对象，skinCode 是 SNK1. 码（链接、JSON 文本也认）。
+// 存的一律是重新压好的 SNK1. 码；不对就把哪儿错了原样告诉对方，好让 AI 照着改。
+function customSkin(p) {
+  if (p.skinData === undefined && !String(p.skinCode || '').trim()) return '';
+  try { return encodeSkin(p.skinData !== undefined ? normalizeSkin(p.skinData) : decodeSkin(String(p.skinCode).slice(0, 8000))); }
+  catch (e) { fail(`皮肤没认出来：${e.message}`); }
 }
 function loadJSON(file, fallback) {
   try { return JSON.parse(fs.readFileSync(file, 'utf8')); }
@@ -163,7 +171,7 @@ export class RoomService {
       // Auto providers are fixed adapters, never arbitrary browser-supplied URLs.
       const identity = p.kind === 'human' ? `human:${name}` : `ai:${provider}:${model}:${name}`;
       return {id: `p${i + 1}`, kind: p.kind, name: p.testBot ? `测试机器人 ${name}` : name, identity,
-        skin: String(p.skin || 'crab').slice(0, 24), skinCode: String(p.skinCode || '').slice(0, 8000),
+        skin: String(p.skin || 'crab').slice(0, 24), skinCode: customSkin(p),
         provider, model, joined: (p.kind === 'human' && i === 0) || (p.kind === 'ai' && provider !== 'manual'),
         testBot: Boolean(p.testBot), tokenHash: digest(secret())};
     });
@@ -192,10 +200,15 @@ export class RoomService {
     const p = r.players.find(p => !p.joined && p.kind === (body.kind || 'human') &&
       (!body.playerId || p.id === body.playerId) && (p.kind === 'human' || p.provider === 'manual'));
     if (!p) fail('没有空位', 409);
+    // 皮肤先验：不对就整次入座不算，座位还空着，改好再来。
+    const skinCode = body.skinData !== undefined || body.skinCode !== undefined ? customSkin(body) : undefined;
+    if (body.skin && !Object.hasOwn(SKINS, body.skin)) fail(`没有「${String(body.skin).slice(0, 24)}」这个现成皮肤，可选：${Object.keys(SKINS).join(' / ')}`);
     const token = secret(); p.tokenHash = digest(token); p.joined = true;
+    if (skinCode !== undefined) p.skinCode = skinCode;
     if (body.name) { p.name = String(body.name).slice(0, 40); p.identity = p.kind === 'human' ? `human:${p.name}` : `ai:manual:${p.model}:${p.name}`; }
-    const cp = r.game.config.players.find(x => x.id === p.id); cp.name = p.name;
-    r.state.snakes.find(x => x.id === p.id).name = p.name;
+    const cp = r.game.config.players.find(x => x.id === p.id), snake = r.state.snakes.find(x => x.id === p.id);
+    cp.name = snake.name = p.name;
+    if (body.skin) p.skin = cp.skin = snake.skin = body.skin;
     r.activeAt = this.clock();
     this.save(r); this.notify(r, 'joined', {playerId: p.id, name: p.name});
     return {room: this.snapshot(r), playerId: p.id, token};

@@ -27,7 +27,7 @@ node games/ai-snake/server.mjs --host 127.0.0.1 --port 8791
 |---|---|
 | 看有哪些房间等人 | `GET /rooms?status=lobby`，看每间的 `openSeats` |
 | 开房 | `POST /rooms`，见下面的建房参数，拿到 `hostToken` |
-| 入座 | `POST /rooms/:id/join {kind:'ai', name}`，拿到 `playerId` + `token` |
+| 入座 | `POST /rooms/:id/join {kind:'ai', name, skin?, skinData?, skinCode?}`，拿到 `playerId` + `token`；皮肤见下 |
 | 退座（开局前） | `POST /rooms/:id/leave {playerId, token}` |
 | 开局 | `POST /rooms/:id/start {hostToken, dropEmpty?:true}`；`dropEmpty` 撤掉没人坐的座位直接开 |
 | 解散（开局前） | `POST /rooms/:id/cancel {hostToken}` |
@@ -50,6 +50,32 @@ node games/ai-snake/server.mjs --host 127.0.0.1 --port 8791
   算挂机以后一直替它直走、不再拖住别人，等它再交路线就恢复。
 - 最多 4 个 AI 座位，皮肤 `crab` / `ghost` / `bat`。
 - `victory:'score'` 按真实时间倒计时，代理想得慢就走不了几步，代理局建议用 `survival`。
+
+### 带自己捏的皮肤入座 · Your own skin
+
+入座时三选一（建房时每个座位也能带 `skinData` / `skinCode`）：
+
+- `skin`：现成皮肤的名字，`crab` / `ghost` / `bat`。
+- `skinData`：自己画一张脸，直接交 JSON 对象。
+- `skinCode`：别人分享的 `SNK1.` 开头的皮肤码（捏皮肤页 `maker.html` 生成的就是它）。
+
+`skinData` 的格式（`.` 是透明，其余每个字符都要在 `palette` 里）：
+
+```json
+{"name":"南瓜",
+ "palette":{"O":"#f28c28","E":"#1b1418","g":"#3a7d2c"},
+ "head":["....gg....","...gg.....",".OOOOOOOO.","OOOOOOOOOO","OOEOOOOEOO",
+         "OOOOOOOOOO","OOEEEEEEOO","OOOOOOOOOO",".OOOOOOOO.",".........."],
+ "body":"#f28c28"}
+```
+
+- `head`：正好 10 行、每行 10 格，画的是蛇头的正脸，蛇转向时脸不跟着转。
+- 可选：`happy`（吃到糖时的脸，同样 10×10）、`neck`（挂在脸下面的领子/领带，每行 8 格，1–5 行）、
+  `edge` / `label` / `tail` / `dots`（`#rrggbb`）、`legs`、`hat`（`true` 才算）。
+- `palette` 最多 16 色，键是一个字母或数字；`name` 最多 8 个字。
+
+写错了，入座会返回 400，`error` 里说清哪一行哪一格不对（例：`皮肤没认出来：head 要正好 10 行，现在是 9 行`），
+这次入座不算、座位还空着，改好再交一次就行。交上去的皮肤会压成 `SNK1.` 码放在 `players[].skinCode` 里，网页按它画。
 
 ## 3. 代理每一轮 · Each turn
 
